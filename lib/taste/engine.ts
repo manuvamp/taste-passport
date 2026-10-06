@@ -222,7 +222,31 @@ export async function nextBatch(session: {
   const seen = new Set(state.shownCardIds);
 
   if (state.signals.length === 0) {
-    const cards = COLD_START_IDS.map((id) => cardsById().get(id)!).filter(Boolean);
+    // never repeat a card already shown — clicking "next" on the gallery must
+    // deal a fresh wall even before any interaction was recorded. Round-robin
+    // across domains so any slice stays visually diverse.
+    const fresh = COLD_START_IDS.filter((id) => !seen.has(id));
+    const ids = fresh.length ? fresh : COLD_START_IDS;
+    const all = ids.map((id) => cardsById().get(id)!).filter(Boolean);
+    const byDomain = new Map<string, TasteCard[]>();
+    for (const c of all) {
+      const arr = byDomain.get(c.domain) ?? [];
+      arr.push(c);
+      byDomain.set(c.domain, arr);
+    }
+    const cards: TasteCard[] = [];
+    let remaining = true;
+    while (cards.length < count && remaining) {
+      remaining = false;
+      for (const arr of byDomain.values()) {
+        if (cards.length >= count) break;
+        const next = arr.shift();
+        if (next) {
+          cards.push(next);
+          remaining = true;
+        }
+      }
+    }
     const pools: Record<string, ExplorationPool> = {};
     cards.forEach((c) => (pools[c.id] = "novel"));
     return { cards, adapted: false, pools };
