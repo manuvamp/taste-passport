@@ -18,7 +18,7 @@ import { mockAdapter } from "@/lib/qloo/mock";
  * graph so the product never hard-crashes without Qloo.
  */
 
-const BASE = process.env.QLOO_BASE_URL || "https://hackathon.api.qloo.com";
+export const BASE = process.env.QLOO_BASE_URL || "https://hackathon.api.qloo.com";
 
 function headers(): HeadersInit {
   return { "X-Api-Key": process.env.QLOO_API_KEY ?? "", accept: "application/json" };
@@ -28,7 +28,7 @@ function headers(): HeadersInit {
  *  entity_id, name, type ("urn:entity"), subtype ("urn:entity:place"),
  *  popularity, tags[{id,name}], properties.images[{url}],
  *  query.affinity (0..1), query.explainability["signal.interests.entities"][{entity_id,score}] */
-function normalizeEntity(raw: Record<string, unknown>): QlooEntity | null {
+export function normalizeEntity(raw: Record<string, unknown>): QlooEntity | null {
   const entityId =
     (raw.entity_id as string) ?? (raw.id as string) ?? (raw.urn as string) ?? null;
   const name = (raw.name as string) ?? (raw.title as string) ?? null;
@@ -103,7 +103,7 @@ function normalizeEntity(raw: Record<string, unknown>): QlooEntity | null {
   };
 }
 
-async function fetchJson(url: string, timeoutMs = 20000): Promise<Record<string, unknown>> {
+export async function fetchJson(url: string, timeoutMs = 20000): Promise<Record<string, unknown>> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
