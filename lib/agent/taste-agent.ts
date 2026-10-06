@@ -107,7 +107,7 @@ const SLOTS = ["Morning", "Midday", "Afternoon", "Evening", "Night"];
 export async function generatePlan(
   request: string,
   profile: TasteProfile | null,
-  opts: { withTaste: boolean }
+  opts: { withTaste: boolean; onStage?: (stage: number) => void }
 ): Promise<AgentPlan> {
   const location = detectLocation(request);
   const domains = detectDomains(request);
@@ -115,6 +115,7 @@ export async function generatePlan(
   const byId = cardsById();
   const items: PlanItem[] = [];
   const groundedIn: string[] = [];
+  opts.onStage?.(0); // parsed intent / reading profile
 
   if (opts.withTaste && profile) {
     groundedIn.push(...profile.coreEntities.slice(0, 5).map((e) => e.title));
@@ -122,6 +123,7 @@ export async function generatePlan(
     // they can seed /v2/insights; mock mode passes card ids straight through.
     const profileInterests = interestsFromProfile(profile, domains[0]);
     const resolvedMap = await resolveCardEntities(profileInterests);
+    opts.onStage?.(1); // entities resolved — querying the graph now
     const interests = [...new Set(Object.values(resolvedMap).map((r) => r.entityId))];
     const usedNames = new Set<string>();
     const nameFor = (entityId: string): string | undefined => {
@@ -176,6 +178,7 @@ export async function generatePlan(
     ? `Anchored in your taste signals: ${groundedIn.join(", ")}.`
     : "No taste profile used — this is the generic answer.";
   const fallbackIntro = `${opts.withTaste ? `Planned for ${archetype}` : "Generic plan"}${location ? ` — ${location}` : ""}. ${tasteLine}`;
+  opts.onStage?.(2); // ranked + grounded
 
   const llmIntro = await llmWrite(
     "You write one-sentence, vivid intros for a culturally personalized itinerary. Never invent place names. Use only the provided items and taste signals.",

@@ -34,6 +34,12 @@ const POOL_LABEL: Record<ExplorationPool, string> = {
   novel: "a deliberate surprise",
 };
 
+const POOL_HINT: Record<ExplorationPool, string> = {
+  exploit: "fits the pattern behind your likes",
+  adjacent: "a neighboring territory Qloo thinks you'll get",
+  novel: "outside your current taste — on purpose",
+};
+
 export default function Discover() {
   const router = useRouter();
   const [queue, setQueue] = useState<TasteCard[]>([]);
@@ -44,7 +50,10 @@ export default function Discover() {
   const [view, setView] = useState<View>("grid");
   const [lastDecision, setLastDecision] = useState<Decision | null>(null);
   const [loading, setLoading] = useState(true);
+  const [exhausted, setExhausted] = useState(false);
+  const [firstPick, setFirstPick] = useState<TasteCard | null>(null);
   const fetching = useRef(false);
+  const gridTop = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("tp_view");
@@ -66,6 +75,7 @@ export default function Discover() {
       setQueue((prev) => {
         const seen = new Set(prev.map((c) => c.id));
         const next = data.cards.filter((c) => !seen.has(c.id));
+        if (next.length === 0 && data.cards.length === 0) setExhausted(true);
         return [...prev, ...next];
       });
       setPools((prev) => ({ ...prev, ...data.pools }));
@@ -73,7 +83,7 @@ export default function Discover() {
       setMode(data.mode);
       if (data.adapted && data.progress.decisive > 0) {
         setAdaptedFlash(true);
-        setTimeout(() => setAdaptedFlash(false), 2600);
+        setTimeout(() => setAdaptedFlash(false), 3200);
       }
     } finally {
       fetching.current = false;
@@ -88,6 +98,7 @@ export default function Discover() {
   const decide = useCallback(
     async (card: TasteCard, decision: Decision) => {
       setLastDecision(decision);
+      setFirstPick((prev) => (decision === "like" && !prev ? card : prev));
       setQueue((q) => q.filter((c) => c.id !== card.id));
       try {
         const res = await fetch("/api/interact", {
@@ -107,8 +118,18 @@ export default function Discover() {
   // prefetch the next batch while there's still something to look at
   const prefetchAt = view === "grid" ? 6 : 2;
   useEffect(() => {
-    if (!loading && queue.length <= prefetchAt) loadFeed();
-  }, [queue.length, loading, prefetchAt, loadFeed]);
+    if (!loading && queue.length <= prefetchAt && !exhausted) loadFeed();
+  }, [queue.length, loading, prefetchAt, exhausted, loadFeed]);
+
+  // scroll back to the top of the grid when a fresh batch lands
+  const prevRound = useRef(0);
+  useEffect(() => {
+    const r = progress?.round ?? 0;
+    if (view === "grid" && r > prevRound.current && prevRound.current > 0) {
+      gridTop.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+    prevRound.current = r;
+  }, [progress?.round, view]);
 
   // keyboard controls (deck only — arrows map naturally to the top card)
   useEffect(() => {
@@ -126,11 +147,12 @@ export default function Discover() {
 
   const decisive = progress?.decisive ?? 0;
   const pct = Math.min(100, Math.round((decisive / 30) * 100));
+  const showCoach = decisive === 0 && !loading && queue.length > 0;
 
   return (
     <main className="flex-1 flex flex-col">
       {/* header */}
-      <div className="px-5 sm:px-8 pt-5 pb-3 flex items-center gap-3 max-w-5xl mx-auto w-full">
+      <div ref={gridTop} className="px-5 sm:px-8 pt-5 pb-3 flex items-center gap-3 max-w-5xl mx-auto w-full">
         <div className="flex-1 min-w-0">
           <div className="flex justify-between text-xs dim mb-1.5">
             <span>
@@ -164,9 +186,10 @@ export default function Discover() {
         <button
           onClick={() => router.push("/profile")}
           disabled={decisive < 12}
-          className="text-sm border hairline rounded-full px-4 py-2 disabled:opacity-40 enabled:hover:border-[var(--ink-dim)] transition-all whitespace-nowrap"
+          className="btn-ghost text-sm !py-2 !px-4 whitespace-nowrap"
+          title={decisive < 12 ? `React to ${12 - decisive} more to unlock` : "See your taste profile"}
         >
-          Taste DNA{decisive >= 30 ? " ✓" : ""}
+          Taste DNA{decisive >= 30 ? " ✓" : decisive >= 12 ? " →" : ""}
         </button>
       </div>
 
@@ -176,19 +199,61 @@ export default function Discover() {
           animate={{ opacity: 1, y: 0 }}
           className="text-center text-xs tracking-wide text-emerald-300/90 mb-1"
         >
-          ✦ the feed just adapted to you — Qloo reshaped this batch
+          ✦ the feed just adapted to you — the taste graph reshaped this batch
         </motion.p>
       )}
 
+      {/* coach mark: first contact */}
+      {showCoach && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          className="text-center px-6 pt-2 pb-1"
+        >
+          <p className="font-display text-xl sm:text-2xl mb-1">Tap <span style={{ color: "var(--like)" }}>♥</span> on what feels like you.</p>
+          <p className="dim text-sm">The feed learns from every pick — no wrong answers.</p>
+        </motion.div>
+      )}
+
       {/* content */}
-      {loading && <p className="dim animate-pulse m-auto">shuffling the cultural deck…</p>}
+      {loading && (
+        <section className="flex-1 px-5 sm:px-8 pb-24 pt-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 max-w-5xl mx-auto">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <div
+                key={i}
+                className="aspect-[3/4] rounded-2xl skeleton"
+                style={{ animationDelay: `${i * 90}ms` }}
+              />
+            ))}
+          </div>
+          <p className="dim text-center text-sm mt-6 animate-pulse">
+            shuffling the cultural deck{mode === "live" ? " — waking up the taste graph" : ""}…
+          </p>
+        </section>
+      )}
 
       {!loading && queue.length === 0 && (
         <div className="flex-1 flex flex-col items-center justify-center dim text-center px-6">
-          <p className="mb-4">That&apos;s the deck for now.</p>
-          <button onClick={loadFeed} className="border hairline rounded-full px-6 py-3">
-            Deal me back in
-          </button>
+          <p className="font-display text-2xl mb-2 text-[var(--ink)]">
+            {exhausted ? "You've seen the whole deck." : "That's the deck for now."}
+          </p>
+          <p className="text-sm mb-6">
+            {decisive >= 12
+              ? "Your profile is ready — go see what the graph learned about you."
+              : `React to ${Math.max(0, 12 - decisive)} more and your Taste DNA unlocks.`}
+          </p>
+          <div className="flex gap-3">
+            {decisive >= 12 && (
+              <button onClick={() => router.push("/profile")} className="btn-primary text-sm">
+                See my Taste DNA →
+              </button>
+            )}
+            <button onClick={() => { setExhausted(false); loadFeed(); }} className="btn-ghost text-sm">
+              Deal me back in
+            </button>
+          </div>
         </div>
       )}
 
@@ -225,17 +290,22 @@ export default function Discover() {
 
       {!loading && queue.length > 0 && view === "grid" && (
         <section className="flex-1 px-5 sm:px-8 pb-24 pt-4">
-          <p className="text-xs dim text-center mb-4">
-            React to as many as you like — the next batch is already loading behind the scenes.
-          </p>
+          {!showCoach && (
+            <p className="text-xs dim text-center mb-4">
+              React to as many as you like — the next batch is already loading behind the scenes.
+            </p>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 max-w-5xl mx-auto">
             <AnimatePresence mode="popLayout">
-              {queue.slice(0, 12).map((card) => (
+              {queue.slice(0, 12).map((card, i) => (
                 <GridCard
                   key={card.id}
                   card={card}
+                  index={i}
                   pool={pools[card.id] ?? "exploit"}
                   showPool={(progress?.round ?? 0) > 1}
+                  becauseOf={(progress?.round ?? 0) > 1 ? firstPick?.title ?? null : null}
+                  eager={i < 4}
                   onDecide={(d) => decide(card, d)}
                 />
               ))}
@@ -254,7 +324,7 @@ export default function Discover() {
       )}
 
       <p className="fixed bottom-1.5 right-3 text-[10px] dim z-20">
-        taste graph: {mode}
+        taste graph: {mode === "live" ? "live" : "offline (deterministic)"}
       </p>
     </main>
   );
@@ -295,7 +365,7 @@ function SwipeCard({
       aria-label={`${card.title} — ${card.domain}`}
     >
       <div className="aspect-[3/4]">
-        <CardImage card={card} width={720} />
+        <CardImage card={card} width={720} eager />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
         <div className="absolute top-4 left-4 flex items-center gap-2">
           <span
@@ -305,7 +375,7 @@ function SwipeCard({
             {card.domain}
           </span>
           {showPool && (
-            <span className="text-[10px] rounded-full px-2.5 py-1 bg-black/40 backdrop-blur-sm dim">
+            <span className="text-[10px] rounded-full px-2.5 py-1 bg-black/40 backdrop-blur-sm dim" title={POOL_HINT[pool]}>
               {POOL_LABEL[pool]}
             </span>
           )}
@@ -341,28 +411,34 @@ function SwipeCard({
 
 function GridCard({
   card,
+  index,
   pool,
   showPool,
+  becauseOf,
+  eager,
   onDecide,
 }: {
   card: TasteCard;
+  index: number;
   pool: ExplorationPool;
   showPool: boolean;
+  becauseOf: string | null;
+  eager: boolean;
   onDecide: (d: Decision) => void;
 }) {
   const color = domainColor(card.domain);
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, scale: 0.94 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 0.88, transition: { duration: 0.18 } }}
-      transition={{ type: "spring", stiffness: 400, damping: 32 }}
+      initial={{ opacity: 0, y: 14, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.88, transition: { duration: 0.16 } }}
+      transition={{ type: "spring", stiffness: 380, damping: 30, delay: Math.min(index * 0.045, 0.5) }}
       className="relative rounded-2xl overflow-hidden border hairline group"
       aria-label={`${card.title} — ${card.domain}`}
     >
       <div className="aspect-[3/4] relative">
-        <CardImage card={card} width={480} />
+        <CardImage card={card} width={480} eager={eager} />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/5 to-transparent" />
 
         <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center gap-1.5 flex-wrap">
@@ -373,11 +449,20 @@ function GridCard({
             {card.domain}
           </span>
           {showPool && (
-            <span className="text-[9px] rounded-full px-2 py-0.5 bg-black/40 backdrop-blur-sm dim truncate">
+            <span className="text-[9px] rounded-full px-2 py-0.5 bg-black/40 backdrop-blur-sm dim truncate" title={POOL_HINT[pool]}>
               {POOL_LABEL[pool]}
             </span>
           )}
         </div>
+
+        {/* because-you-liked chip */}
+        {becauseOf && showPool && pool !== "novel" && (
+          <div className="absolute left-2.5 bottom-16 right-2.5 pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+            <span className="text-[10px] rounded-lg px-2 py-1 bg-black/60 backdrop-blur-sm dim inline-block">
+              because you liked {becauseOf}
+            </span>
+          </div>
+        )}
 
         {/* action buttons: always visible on touch, hover-revealed on desktop */}
         <div className="absolute top-2.5 right-2.5 flex flex-col gap-1.5 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 focus-within:opacity-100 transition-opacity">

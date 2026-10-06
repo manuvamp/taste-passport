@@ -84,14 +84,14 @@ export default function DemoPage() {
               <button
                 onClick={() => load(p.id)}
                 disabled={busy !== null}
-                className="flex-1 bg-[var(--ink)] text-[var(--bg)] rounded-full px-5 py-3 text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                className="btn-primary flex-1 text-sm"
                 style={busy === p.id ? { background: p.color } : undefined}
               >
                 {busy === p.id ? "building profile…" : `Load ${p.name} →`}
               </button>
               <Link
                 href="/agent?q=Plan%20my%20Saturday%20in%20Tokyo"
-                className="border hairline rounded-full px-4 py-3 text-sm dim hover:text-[var(--ink)] whitespace-nowrap"
+                className="btn-ghost text-sm !px-4 dim hover:text-[var(--ink)] whitespace-nowrap"
               >
                 Agent
               </Link>

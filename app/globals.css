@@ -3,10 +3,14 @@
 :root {
   --bg: #0b0b0d;
   --bg-soft: #141417;
+  --bg-softer: #1a1a1e;
   --ink: #f2efe9;
   --ink-dim: #a8a49c;
+  --ink-faint: #6b6862;
   --hairline: #26262b;
   --accent: #e8e4dc;
+  --like: #34d399;
+  --nope: #ef4444;
 }
 
 html {
@@ -33,6 +37,10 @@ body {
   color: var(--ink-dim);
 }
 
+.faint {
+  color: var(--ink-faint);
+}
+
 .domain-dot {
   width: 8px;
   height: 8px;
@@ -40,7 +48,93 @@ body {
   display: inline-block;
 }
 
-/* grainy paper texture backdrop */
+/* ---- buttons ---------------------------------------------------- */
+
+.btn-primary {
+  background: var(--ink);
+  color: var(--bg);
+  font-weight: 500;
+  padding: 0.8rem 1.75rem;
+  border-radius: 9999px;
+  transition: opacity 0.15s, transform 0.1s;
+}
+.btn-primary:hover { opacity: 0.88; }
+.btn-primary:active { transform: scale(0.97); }
+.btn-primary:disabled { opacity: 0.45; }
+
+.btn-ghost {
+  border: 1px solid var(--hairline);
+  padding: 0.8rem 1.75rem;
+  border-radius: 9999px;
+  transition: border-color 0.15s, transform 0.1s;
+}
+.btn-ghost:hover { border-color: var(--ink-dim); }
+.btn-ghost:active { transform: scale(0.97); }
+.btn-ghost:disabled { opacity: 0.45; }
+
+/* ---- surfaces ---------------------------------------------------- */
+
+.panel {
+  border: 1px solid var(--hairline);
+  border-radius: 1.5rem;
+  background: var(--bg);
+}
+
+.panel-soft {
+  border: 1px solid var(--hairline);
+  border-radius: 1.5rem;
+  background: var(--bg-soft);
+}
+
+.overline {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  color: var(--ink-dim);
+}
+
+/* ---- skeletons / shimmer ---------------------------------------- */
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-soft) 25%,
+    var(--bg-softer) 50%,
+    var(--bg-soft) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+/* ---- image settle ------------------------------------------------ */
+
+@keyframes img-settle {
+  from { opacity: 0; transform: scale(1.04); filter: blur(6px) saturate(0.7); }
+  to   { opacity: 1; transform: scale(1);    filter: blur(0)  saturate(1); }
+}
+
+.img-settle {
+  animation: img-settle 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ---- soft infinite pulse for loading rings ----------------------- */
+
+@keyframes slow-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+
+.slow-pulse {
+  animation: slow-pulse 2.2s ease-in-out infinite;
+}
+
+/* ---- grainy paper texture backdrop -------------------------------- */
+
 .grain::before {
   content: "";
   position: fixed;
