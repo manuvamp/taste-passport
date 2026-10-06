@@ -133,7 +133,7 @@ export default function ProfilePage() {
         <div className="flex items-baseline justify-between mb-1 flex-wrap gap-2">
           <h2 className="font-display text-2xl">Unexpected connections</h2>
           <span className="text-[10px] uppercase tracking-widest dim">
-            {profile.mode === "live" ? "Qloo live graph" : "local inference"}
+            labeled by source — Qloo live graph / local inference
           </span>
         </div>
         <p className="dim text-sm mb-6">
@@ -152,6 +152,16 @@ export default function ProfilePage() {
                 <span className="domain-dot" style={{ background: domainColor(c.domain) }} />
                 <span className="text-[10px] uppercase tracking-[0.2em]" style={{ color: domainColor(c.domain) }}>
                   {c.domain}
+                </span>
+                <span
+                  className="ml-auto text-[9px] uppercase tracking-widest rounded-full px-2 py-0.5"
+                  style={
+                    c.source === "qloo"
+                      ? { background: "#34d3991f", color: "#34d399" }
+                      : { background: "#a8a49c1a", color: "var(--ink-dim)" }
+                  }
+                >
+                  {c.source === "qloo" ? "Qloo live graph" : "local inference"}
                 </span>
               </div>
               <h3 className="font-display text-xl mb-2">{c.title}</h3>

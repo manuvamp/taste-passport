@@ -7,7 +7,7 @@ import type {
   TasteState,
   UnexpectedConnection,
 } from "@/lib/types";
-import { DOMAINS } from "@/lib/types";
+import { DOMAINS, DOMAIN_TO_QLOO_TYPE } from "@/lib/types";
 import { COLD_START_IDS, SEED_CARDS, cardsById } from "@/data/cards";
 import { mockAffinity, tagAffinity } from "@/lib/qloo/mock";
 import { getQlooAdapter } from "@/lib/qloo";
@@ -444,6 +444,8 @@ export function buildProfile(session: {
       reason: `You never picked ${card.domain === "food" ? "this cuisine" : card.domain}, but your taste for ${bridges.slice(0, 3).join(", ")} strongly overlaps with it (${Math.round(aff * 100)}% affinity).`,
       bridges: bridges.slice(0, 4),
       qlooBacked: true,
+      source: "local",
+      affinity: aff,
     });
   }
 
@@ -488,3 +490,80 @@ export function buildProfile(session: {
 }
 
 export { tagAffinity };
+
+/**
+ * Live-graph variant of "unexpected connections": queries /v2/insights for
+ * domains the user has never liked and keeps entities whose explainability
+ * names the user's own likes. Falls back silently — the local (deterministic)
+ * connections in the profile remain, labeled "local inference".
+ */
+export async function enrichConnectionsLive(
+  session: { state: TasteState },
+  profile: TasteProfile
+): Promise<TasteProfile> {
+  const adapter = getQlooAdapter();
+  if (adapter.mode !== "live") return profile;
+
+  const state = session.state;
+  const likes = state.signals.filter((s) => s.interaction === "like");
+  if (likes.length < 2) return profile;
+  const likedDomains = new Set(likes.map((s) => s.domain));
+
+  const resolved = await resolveCardEntities(likes.map((s) => s.cardId).slice(-10));
+  const interests = [...new Set(Object.values(resolved).map((r) => r.entityId))];
+  if (!interests.length) return profile;
+
+  const byId = cardsById();
+  const nameFor = (id: string): string | undefined => {
+    for (const [cardId, r] of Object.entries(resolved)) {
+      if (r.entityId === id) return byId.get(cardId)?.title ?? r.name;
+    }
+    return getLiveCard(`qloo:${id}`)?.title;
+  };
+
+  // Probe unexplored domains first; if the user touched almost everything,
+  // fall back to their weakest liked domains so the live graph still gets a say.
+  const unexplored = DOMAINS.filter(
+    (d) => !likedDomains.has(d) && (state.domainWeights[d] ?? 0) === 0 && DOMAIN_TO_QLOO_TYPE[d]
+  );
+  const weak = [...likedDomains]
+    .filter((d) => DOMAIN_TO_QLOO_TYPE[d])
+    .sort(
+      (a, b) => (state.domainWeights[a] ?? 0) - (state.domainWeights[b] ?? 0)
+    )
+    .slice(0, 2);
+  const targetDomains = [...unexplored, ...weak].slice(0, 3);
+  if (!targetDomains.length) return profile;
+
+  const existing = new Set(profile.unexpectedConnections.map((c) => c.title.toLowerCase()));
+  const live: UnexpectedConnection[] = [];
+  for (const d of targetDomains) {
+    if (live.length >= 2) break;
+    try {
+      const recs = await adapter.getRecommendations({ interests, domain: d, take: 6, excludeIds: interests });
+      for (const e of recs.entities) {
+        if (live.length >= 2) break;
+        if (existing.has(e.name.toLowerCase())) continue;
+        const contributions = Object.entries(e.explainability ?? {}).sort((a, b) => b[1] - a[1]);
+        const bridges = contributions
+          .map(([id]) => nameFor(id))
+          .filter(Boolean) as string[];
+        if (!bridges.length) continue; // no grounded explanation — skip
+        existing.add(e.name.toLowerCase());
+        live.push({
+          title: e.name,
+          domain: d,
+          reason: `You never picked ${d === "food" ? "this cuisine" : d}, but Qloo's live graph links it to ${bridges.slice(0, 2).join(" and ")} (${Math.round((e.affinity ?? 0.5) * 100)}% affinity).`,
+          bridges: bridges.slice(0, 3),
+          qlooBacked: true,
+          source: "qloo",
+          affinity: e.affinity,
+        });
+      }
+    } catch {
+      // per-domain failure must not break the profile
+    }
+  }
+  if (!live.length) return profile;
+  return { ...profile, unexpectedConnections: [...live, ...profile.unexpectedConnections].slice(0, 6) };
+}
