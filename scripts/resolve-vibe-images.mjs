@@ -2,11 +2,11 @@
 // search) and writes data/vibe-images.json as { themeId: [url, ...] }.
 // Polite: sequential with backoff on 429.
 // Run: node --experimental-strip-types scripts/resolve-vibe-images.mjs
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { VIBES } from "../data/vibes.ts";
 
 const UA = { "user-agent": "TastePassport/1.0 (vibe image resolver)" };
-const PER_THEME = 9;
+const PER_THEME = 20;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // filenames that suggest people/faces or non-photos
 const BAD = /portrait|people|man\b|men\b|woman|women|girl|boy|crowd|selfie|face|family|wedding|child|kid|team|player|band|concert|logo|map|flag|diagram|icon|poster|screenshot|\.svg|\.png|\.gif|\.tif/i;
@@ -30,7 +30,7 @@ async function getJson(url) {
 
 async function commons(q) {
   const p = new URLSearchParams({
-    action: "query", generator: "search", gsrsearch: `${q} filetype:bitmap`, gsrnamespace: "6", gsrlimit: "20",
+    action: "query", generator: "search", gsrsearch: `${q} filetype:bitmap`, gsrnamespace: "6", gsrlimit: "50",
     prop: "imageinfo", iiprop: "url|mime|size", iiurlwidth: "360", format: "json",
   });
   const json = await getJson(`https://commons.wikimedia.org/w/api.php?${p}`);
@@ -48,13 +48,15 @@ async function wikiLead(q) {
   return src && !/\.svg/i.test(src) ? [src] : [];
 }
 
-const out = {};
+const OUTF = new URL("../data/vibe-images.json", import.meta.url);
+const out = existsSync(OUTF) ? JSON.parse(readFileSync(OUTF, "utf8")) : {};
 const themes = VIBES.filter((v) => v.imageQuery);
 for (const v of themes) {
   const lead = await wikiLead(v.imageQuery);
   const found = await commons(v.imageQuery);
-  const urls = [...new Set([...lead, ...found])].slice(0, PER_THEME);
+  const urls = [...new Set([...(out[v.id] ?? []), ...lead, ...found])].slice(0, PER_THEME);
   if (urls.length >= 3) out[v.id] = urls;
+  writeFileSync(OUTF, JSON.stringify(out, null, 1));
   await sleep(700);
 }
 writeFileSync(new URL("../data/vibe-images.json", import.meta.url), JSON.stringify(out, null, 1));

@@ -10,6 +10,8 @@ import type {
 import { DOMAINS, DOMAIN_TO_QLOO_TYPE } from "@/lib/types";
 import { COLD_START_IDS, SEED_CARDS, cardsById } from "@/data/cards";
 import { isVibe } from "@/data/vibes";
+import CARD_IMAGES from "@/data/card-images.json";
+import VIBE_IMAGES from "@/data/vibe-images.json";
 import { mockAffinity, tagAffinity } from "@/lib/qloo/mock";
 import { getQlooAdapter } from "@/lib/qloo";
 import { resolveCardEntities } from "@/lib/qloo/resolve";
@@ -149,15 +151,20 @@ export function scoreCandidates(
       posInterests[s.entityId.slice(5)] = 1;
     }
   }
-  const posTagVector: Record<string, number> = {};
-  const negTagVector: Record<string, number> = {};
+  // Signal-weighted taste vector (recency + diminishing returns already baked into signal.weight),
+  // so what you picked lately counts more and one repeated pick can't dominate.
+  const userVec: Record<string, number> = {};
+  let likeCount = 0;
   for (const s of state.signals) {
-    const card = cardsById().get(s.cardId);
+    if (s.interaction === "skip") continue;
+    const card = cardsById().get(s.cardId) ?? getLiveCard(s.cardId);
     if (!card) continue;
-    const target = s.interaction === "like" ? posTagVector : s.interaction === "dislike" ? negTagVector : null;
-    if (!target) continue;
-    for (const t of card.tags) target[t] = (target[t] ?? 0) + 1;
+    if (s.interaction === "like") likeCount++;
+    for (const t of card.tags) userVec[t] = (userVec[t] ?? 0) + s.weight;
   }
+  const idf = tagIdf();
+  const userNorm = Math.sqrt(Object.entries(userVec).reduce((a, [t, w]) => a + (w * (idf[t] ?? 1)) ** 2, 0)) || 1;
+  const conf = computeConfidence(state);
 
   const totalDomains = Object.entries(state.domainWeights).reduce(
     (a, [k, v]) => (v > 0 ? a + v : a),
@@ -168,33 +175,45 @@ export function scoreCandidates(
   for (const card of SEED_CARDS) {
     if (seen.has(card.id)) continue;
     const qloo = qlooScores[card.id] ?? mockAffinity(card.id, posInterests);
-    const cardTags = new Set(card.tags);
-    let inter = 0;
-    let unionSize = card.tags.length;
-    for (const [t, w] of Object.entries(posTagVector)) {
-      unionSize += w;
-      if (cardTags.has(t)) inter += w;
+    // IDF-weighted cosine: sharing a rare tag ("kaiseki") says far more than a common one ("warm")
+    let dot = 0;
+    let cn = 0;
+    for (const t of card.tags) {
+      const w = idf[t] ?? 1;
+      cn += w * w;
+      dot += (userVec[t] ?? 0) * w * w;
     }
-    let negOverlap = 0;
-    for (const [t, w] of Object.entries(negTagVector)) if (cardTags.has(t)) negOverlap += w;
-    const tagSim = unionSize > 0 ? Math.max(0, inter / unionSize - negOverlap * 0.15) : 0;
+    const tagSim = cn > 0 ? Math.max(0, dot / (Math.sqrt(cn) * userNorm * 1)) : 0;
 
-    // domain balance: prefer domains under-represented in positive weight
+    // early on, widen across domains; later, lean into the domains you actually love
     const domW = state.domainWeights[card.domain] ?? 0;
-    const balance = totalDomains > 0 ? Math.max(0, 1 - domW / totalDomains) : 1;
+    const share = totalDomains > 0 ? domW / totalDomains : 0;
+    const balance = totalDomains > 0 ? Math.max(0, 1 - share) : 1;
+    const domainAffinity = Math.min(1, share * 3);
 
     const novelty = seen.size === 0 ? 1 : 1 - qloo;
 
     const score =
       WEIGHTS.qloo * qloo +
       WEIGHTS.bridge * (qlooScores[card.id] ?? 0) * 0 + // bridge merged into qloo in mock; live explainability boosts below
-      WEIGHTS.tag * tagSim +
-      WEIGHTS.balance * balance +
+      (WEIGHTS.tag + 0.35 * Math.min(1, likeCount / 40)) * Math.min(1, tagSim * 1.6) +
+      WEIGHTS.balance * (1 - conf) * balance +
+      0.12 * conf * domainAffinity +
       WEIGHTS.novelty * novelty * 0.5; // dampened so novelty never swamps signal
 
     out.push({ card, score, parts: { qloo, bridge: qlooScores[card.id] ?? 0, tag: tagSim, balance, novelty }, pool: "exploit" });
   }
   return out.sort((a, b) => b.score - a.score);
+}
+
+let _idf: Record<string, number> | null = null;
+function tagIdf(): Record<string, number> {
+  if (_idf) return _idf;
+  const df: Record<string, number> = {};
+  for (const c of SEED_CARDS) for (const t of new Set(c.tags)) df[t] = (df[t] ?? 0) + 1;
+  _idf = {};
+  for (const [t, n] of Object.entries(df)) _idf[t] = Math.log(1 + SEED_CARDS.length / n);
+  return _idf;
 }
 
 function assignPools(ranked: ScoredCandidate[]): void {
@@ -206,11 +225,14 @@ function assignPools(ranked: ScoredCandidate[]): void {
   });
 }
 
-export function batchTargets(count: number): { exploit: number; adjacent: number; novel: number } {
+export function batchTargets(count: number, confidence = 0): { exploit: number; adjacent: number; novel: number } {
+  // the more we know, the more we exploit: 70/20/10 at the start → 85/11/4 once confident
+  const ex = 0.7 + 0.15 * confidence;
+  const adj = 0.2 - 0.09 * confidence;
   return {
-    exploit: Math.round(count * 0.7),
-    adjacent: Math.round(count * 0.2),
-    novel: count - Math.round(count * 0.7) - Math.round(count * 0.2),
+    exploit: Math.round(count * ex),
+    adjacent: Math.round(count * adj),
+    novel: count - Math.round(count * ex) - Math.round(count * adj),
   };
 }
 
@@ -218,7 +240,7 @@ export function batchTargets(count: number): { exploit: number; adjacent: number
 export async function nextBatch(session: {
   state: TasteState;
   currentRound: number;
-}, count = 12): Promise<{ cards: TasteCard[]; adapted: boolean; pools: Record<string, ExplorationPool> }> {
+}, count = 12, onlyDomains?: string[]): Promise<{ cards: TasteCard[]; adapted: boolean; pools: Record<string, ExplorationPool> }> {
   const state = session.state;
   const seen = new Set(state.shownCardIds);
   // a live Qloo card and its seed twin are the same thing to the user — treat both as seen
@@ -297,7 +319,8 @@ export async function nextBatch(session: {
     // (Qloo's generic "place" type returns hotels and bars, destinations/brands ship without photos,
     // and artists are portraits — so those stay with the curated seed cards.)
     const LIVE_DOMAINS: Domain[] = ["film", "tv", "game"]; // live books skew to non-fiction/memoir — curated seed books are better
-    const uniqueDomains = [...new Set([0, 1, 2].map((k) => LIVE_DOMAINS[(rot + k) % LIVE_DOMAINS.length]))];
+    const liveAllowed = onlyDomains ? LIVE_DOMAINS.filter((d) => onlyDomains.includes(d)) : LIVE_DOMAINS;
+    const uniqueDomains = liveAllowed.length ? [...new Set([0, 1, 2].map((k) => liveAllowed[(rot + k) % liveAllowed.length]))] : [];
     const perDomain = await Promise.all(
       uniqueDomains.map((d) =>
         adapter.getRecommendations({ interests: interestEntityIds, domain: d, take: 40, excludeIds: likedCardIds })
@@ -310,6 +333,7 @@ export async function nextBatch(session: {
     registerLiveCards(liveCards);
   }
 
+  if (onlyDomains) liveCards = liveCards.filter((c) => onlyDomains.includes(c.domain));
   const recs = await adapter.getRecommendations({
     interests: interestEntityIds,
     take: 30,
@@ -329,9 +353,14 @@ export async function nextBatch(session: {
     }
   }
   ranked.sort((a, b) => b.score - a.score);
+  if (onlyDomains) {
+    const keep = ranked.filter((c) => onlyDomains.includes(c.card.domain));
+    ranked.length = 0;
+    ranked.push(...keep);
+  }
   assignPools(ranked);
 
-  const targets = batchTargets(count);
+  const targets = batchTargets(count, computeConfidence(state));
   const pools: Record<string, ExplorationPool> = {};
   const picked: TasteCard[] = [];
   const domainPerBatch: Record<string, number> = {};
@@ -398,6 +427,29 @@ export async function nextBatch(session: {
 }
 
 // ---------- profile ----------
+/** Best real photo for any card: live Qloo image, resolved seed photo, or the vibe's first photo. */
+export function imageFor(card: TasteCard): string | undefined {
+  return card.imageUrl ?? (CARD_IMAGES as Record<string, string>)[card.id] ?? (VIBE_IMAGES as Record<string, string[]>)[card.id]?.[0];
+}
+
+/** Remove every signal for a card and subtract its contribution from the taste vector (profile tweaking). */
+export function removeCardSignals(state: TasteState, cardId: string): number {
+  const gone = state.signals.filter((s) => s.cardId === cardId);
+  if (!gone.length) return 0;
+  const card = cardsById().get(cardId) ?? getLiveCard(cardId);
+  for (const s of gone) {
+    for (const t of card?.tags ?? []) {
+      const v = (state.tagVector[t] ?? 0) - s.weight;
+      if (v > 0.001) state.tagVector[t] = v;
+      else delete state.tagVector[t];
+    }
+    state.domainWeights[s.domain] = Math.max(0, (state.domainWeights[s.domain] ?? 0) - (s.interaction === "like" ? 1 : -0.4));
+  }
+  state.signals = state.signals.filter((s) => s.cardId !== cardId);
+  state.lastUpdated = new Date().toISOString();
+  return gone.length;
+}
+
 const ARCHETYPES: { match: string[]; name: string; description: string }[] = [
   { match: ["minimal", "quiet", "zen", "silence", "precise"], name: "Quiet Intensity", description: "restrained, atmospheric, precise — you let space and silence do the talking" },
   { match: ["neon", "night", "urban", "vibrant", "strobe"], name: "Neon Velocity", description: "electric, urban, after-dark — you like culture at full volume" },
@@ -450,11 +502,19 @@ export function buildProfile(session: {
     .slice(0, 8)
     .map(([id]) => lookup(id))
     .filter(Boolean)
-    .map((c) => ({ title: c!.title, domain: c!.domain, cardId: c!.id }));
+    .map((c) => ({ title: c!.title, domain: c!.domain, cardId: c!.id, imageUrl: imageFor(c!) }));
+
+  const galleryIds = [...new Set(likes.map((s) => s.cardId))];
+  const gallery = galleryIds
+    .map((id) => lookup(id))
+    .filter((c): c is TasteCard => !!c && !!imageFor(c))
+    .map((c) => ({ title: c.title, domain: c.domain, cardId: c.id, imageUrl: imageFor(c)!, weight: entityWeight[c.id] ?? 0 }))
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 36);
 
   const inferredTags = Object.entries(state.tagVector)
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
+    .slice(0, 14)
     .map(([tag, weight]) => ({ tag, weight: Math.round(weight * 100) / 100 }));
 
   const totalPos = Object.values(state.domainWeights).reduce((a, v) => a + Math.max(0, v), 0) || 1;
@@ -508,6 +568,7 @@ export function buildProfile(session: {
       title: card.title,
       domain: card.domain,
       cardId: card.id,
+      imageUrl: imageFor(card),
       reason: `You never picked ${card.domain === "food" ? "this cuisine" : card.domain}, but your taste for ${bridges.slice(0, 3).join(", ")} strongly overlaps with it (${Math.round(aff * 100)}% affinity).`,
       bridges: bridges.slice(0, 4),
       qlooBacked: true,
@@ -515,6 +576,19 @@ export function buildProfile(session: {
       affinity: aff,
     });
   }
+
+  // What we've learned you'd probably love: best-scoring cards you have not picked, with the picks that point to them
+  const likedIds = new Set(likes.map((s) => s.cardId));
+  const suggestions = scoreCandidates(state, {}, likedIds)
+    .filter((c) => !isVibe(c.card.id) && imageFor(c.card) && c.card.domain !== "music")
+    .slice(0, 60)
+    .map((c) => {
+      const why = likes
+        .filter((l) => l.cardId !== c.card.id && mockAffinity(c.card.id, { [l.cardId]: 1 }) > 0.12)
+        .slice(0, 3)
+        .map((l) => lookup(l.cardId)?.title ?? l.cardId);
+      return { title: c.card.title, domain: c.card.domain, cardId: c.card.id, imageUrl: imageFor(c.card)!, why };
+    });
 
   const archetype = deriveArchetype(state.tagVector);
   const conf = computeConfidence(state);
@@ -537,6 +611,8 @@ export function buildProfile(session: {
     confidence: conf,
     archetype,
     coreEntities,
+    gallery,
+    suggestions,
     positiveSignals: coreEntities.map((e) => ({ ...e, weight: entityWeight[e.cardId] ?? 0 })),
     negativeSignals: dislikes
       .slice(0, 6)

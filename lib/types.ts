@@ -104,6 +104,7 @@ export type UnexpectedConnection = {
   title: string;
   domain: Domain;
   cardId?: string;
+  imageUrl?: string;
   reason: string;
   /** Which of the user's entities Qloo/graph linked it to. */
   bridges: string[];
@@ -120,8 +121,12 @@ export type TasteProfile = {
   interactionCount: number;
   confidence: number;
   archetype: { name: string; description: string };
-  coreEntities: { title: string; domain: Domain; cardId: string }[];
+  coreEntities: { title: string; domain: Domain; cardId: string; imageUrl?: string }[];
+  /** Up to ~36 liked items that have a real photo, for the visual results page. */
+  gallery?: { title: string; domain: Domain; cardId: string; imageUrl: string; weight: number }[];
   positiveSignals: { title: string; domain: Domain; cardId: string; weight: number }[];
+  /** Items we predict you will love (not picked yet), each with the picks that point to it. */
+  suggestions?: { title: string; domain: Domain; cardId: string; imageUrl: string; why: string[] }[];
   negativeSignals: { title: string; domain: Domain; cardId?: string; weight: number }[];
   inferredTags: { tag: string; weight: number }[];
   domainPreferences: Record<string, number>;
