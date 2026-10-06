@@ -80,13 +80,19 @@ app/                       Next.js App Router
     agent/compare          generic vs taste-grounded (the judging moment)
     demo                   persona sessions
     admin/stats            Qloo call metrics, cache, weights
+    mcp                    hosted MCP: same 5 tools over HTTP JSON-RPC
+    eval                   live evaluation (generic vs taste arms, scored)
+    og                     social share card (next/og)
+    agent/progress         coarse plan-generation ticks (polled by the UI)
     img                    CC-licensed Wikipedia image resolver (302 + cache)
     cards                  seed catalog
+  eval/                    evaluation panel UI
 lib/
   qloo/                    adapter (live + mock), TTL cache, metrics
   taste/engine.ts          scoring, exploration, confidence, profile builder
-  agent/                   Taste Agent + optional LLM polish
-  store/db.ts              JSON-file session store (swap for Postgres later)
+  agent/                   Taste Agent + optional LLM polish + progress ticks
+  store/db.ts              sessions: Vercel KV (prod) / JSON file (local), auto
+  rate-limit.ts            in-memory token bucket for expensive routes
 mcp/server.mjs             MCP stdio server (5 tools)
 data/cards.ts              174 curated seed entities, 12 domains
 scripts/seed-cards.mjs     seed catalog validator
@@ -121,16 +127,22 @@ gracefully to the mock graph if Qloo is unavailable. The UI shows a subtle
 
 ## MCP / agent integration
 
+Two ways in, same 5 tools (`get_taste_profile`, `get_taste_context`,
+`recommend_for_context`, `explain_taste_match`, `record_feedback`):
+
 ```bash
-# point an MCP client at the app:
+# 1) Hosted (no local install): stateless HTTP JSON-RPC — connect any
+#    remote-capable MCP client to the public deployment:
+POST /api/mcp?sid=<sessionId>
+
+# 2) Local stdio server talking to any deployment:
 TASTE_PASSPORT_URL=http://localhost:3000 \
 TASTE_SESSION_ID=<sessionId> \
 node mcp/server.mjs
 ```
 
-Tools: `get_taste_profile`, `get_taste_context`, `recommend_for_context`,
-`explain_taste_match`, `record_feedback`. No secrets are exposed — the server
-talks to the web API over HTTP using a session id you choose.
+No secrets cross the boundary — tools are served from the web API using an
+anonymous session id you choose (find yours on `/dev`).
 
 ## Local development
 
@@ -157,10 +169,22 @@ mode. `QLOO_MODE=live` + `QLOO_API_KEY` enables the real taste graph;
 
 ## Deployment
 
-Any Node host works. Vercel note: the JSON store is per-instance on serverless —
-fine for the hackathon demo; swap `lib/store/db.ts` for Postgres/Supabase (same
-small interface) for production persistence. Set env vars in the host dashboard;
-never commit `.env*`.
+Any Node host works; it deploys to Vercel as-is.
+
+- **Persistence** — locally, sessions live in a JSON file (`.data/store.json`,
+  bounded at 2000 sessions). On Vercel, attach a **KV (Upstash Redis)** store:
+  `KV_REST_API_URL` / `KV_REST_API_TOKEN` are injected automatically and
+  `lib/store/db.ts` switches over with zero code changes — sessions then
+  survive across serverless instances (30-day TTL).
+- **Env** — set `QLOO_MODE=live`, `QLOO_API_KEY`, `QLOO_BASE_URL` in the host
+  dashboard; never commit `.env*`.
+- **Agents over HTTP** — the same 5 MCP tools are reachable on the public URL
+  via `POST /api/mcp?sid=<session-id>` (stateless JSON-RPC), so judges can
+  connect remote clients without running `mcp/server.mjs` locally. The exact
+  connect string is shown on `/dev`.
+- **Evaluation** — `/eval` runs 2 personas × 3 scenarios through generic vs.
+  taste-grounded arms live and displays personalization / breadth / grounded-pick
+  rates.
 
 ## Evaluation
 
