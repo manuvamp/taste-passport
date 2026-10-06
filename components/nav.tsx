@@ -2,8 +2,8 @@ import Link from "next/link";
 
 export function Nav({ mode }: { mode?: string }) {
   return (
-    <nav className="flex items-center justify-between px-5 sm:px-8 py-4 border-b hairline">
-      <Link href="/" className="font-display text-lg tracking-tight">
+    <nav className="flex items-center justify-between px-5 sm:px-8 py-4 border-b hairline sticky top-0 z-40 bg-[var(--bg)]/85 backdrop-blur-sm">
+      <Link href="/" className="font-display text-lg tracking-tight shrink-0">
         Taste Passport
       </Link>
       <div className="flex items-center gap-4 sm:gap-6 text-sm dim">
@@ -17,7 +17,7 @@ export function Nav({ mode }: { mode?: string }) {
           Agent
         </Link>
         <Link href="/demo" className="hover:text-[var(--ink)] transition-colors hidden sm:inline">
-          Demo users
+          Demo
         </Link>
         <Link href="/dev" className="hover:text-[var(--ink)] transition-colors opacity-50 hover:opacity-100 hidden sm:inline" title="Developer dashboard">
           ⚙
@@ -25,7 +25,7 @@ export function Nav({ mode }: { mode?: string }) {
         {mode && (
           <span
             className="text-[10px] uppercase tracking-widest border hairline rounded-full px-2 py-0.5"
-            title={mode === "live" ? "Live Qloo API" : "Deterministic mock taste graph (set QLOO_MODE=live + QLOO_API_KEY)"}
+            title={mode === "live" ? "Live Qloo API" : "Deterministic offline taste graph (set QLOO_MODE=live + QLOO_API_KEY)"}
           >
             {mode}
           </span>

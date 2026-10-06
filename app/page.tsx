@@ -1,6 +1,4 @@
 import Link from "next/link";
-import { Nav } from "@/components/nav";
-import { getQlooAdapter } from "@/lib/qloo";
 import { SEED_CARDS } from "@/data/cards";
 
 const FEATURES = [
@@ -23,12 +21,10 @@ const FEATURES = [
 ];
 
 export default function Landing() {
-  const mode = getQlooAdapter().mode;
   const domainCount = new Set(SEED_CARDS.map((c) => c.domain)).size;
 
   return (
     <main className="flex-1">
-      <Nav mode={mode} />
       <section className="px-5 sm:px-8 pt-20 sm:pt-28 pb-16 max-w-5xl mx-auto">
         <p className="text-xs uppercase tracking-[0.25em] dim mb-6">
           A cultural taste layer for AI agents · Qloo-powered
