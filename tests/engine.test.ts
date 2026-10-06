@@ -72,13 +72,22 @@ describe("exploration 70/20/10", () => {
     }
   });
 
-  it("cold start is the fixed broad batch", async () => {
+  it("cold start is the fixed broad batch, honoring count and never repeating shown cards", async () => {
     const session = { state: newTasteStateForTest("s"), currentRound: 0 };
     const { cards, adapted } = await nextBatch(session, 12);
     expect(adapted).toBe(false);
-    expect(cards.length).toBe(26);
+    expect(cards.length).toBe(12); // capped at requested count
     const domains = new Set(cards.map((c) => c.domain));
-    expect(domains.size).toBeGreaterThanOrEqual(9);
+    expect(domains.size).toBeGreaterThanOrEqual(8);
+
+    // a second cold-start batch (gallery "next") deals fresh cards, not repeats
+    const { cards: second } = await nextBatch(
+      { state: { ...session.state, shownCardIds: cards.map((c) => c.id) }, currentRound: 1 },
+      12
+    );
+    const seen = new Set(cards.map((c) => c.id));
+    expect(second.length).toBeGreaterThan(0);
+    expect(second.some((c) => seen.has(c.id))).toBe(false);
   });
 
   it("the feed adapts after signals and never repeats shown cards", async () => {
