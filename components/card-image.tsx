@@ -10,8 +10,11 @@ import { domainColor } from "@/components/domain";
  * gradient + monogram derived from the card. While loading, a soft gradient
  * placeholder shows; the image settles in (blur → sharp) once decoded.
  */
+// Wikipedia lead images for these are portraits; we show an instant typographic tile instead
+const PORTRAIT_IDS = new Set(["kusama", "banksy", "basquiat", "kahlo", "murakami-takashi", "olafur-eliasson", "yohji-yamamoto", "vivienne-westwood", "rick-owens", "margiela"]);
+
 export function CardImage({ card, width = 640, alt, eager = false }: { card: TasteCard; width?: number; alt?: string; eager?: boolean }) {
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(card.domain === "music" || PORTRAIT_IDS.has(card.id));
   const [loaded, setLoaded] = useState(false);
   const color = domainColor(card.domain);
   const initials = card.title

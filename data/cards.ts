@@ -1,4 +1,5 @@
 import type { TasteCard } from "@/lib/types";
+import { VIBES } from "@/data/vibes";
 
 /**
  * Curated seed corpus: ~176 culturally real entities across 12 domains.
@@ -256,6 +257,8 @@ export const DEMO_PERSONAS: Record<
   },
 };
 
+let _byId: Map<string, TasteCard> | null = null;
 export function cardsById(): Map<string, TasteCard> {
-  return new Map(SEED_CARDS.map((c) => [c.id, c]));
+  // vibes resolve for interactions/profiles but are not part of SEED_CARDS (depth feed)
+  return (_byId ??= new Map([...SEED_CARDS, ...VIBES].map((c) => [c.id, c])));
 }
