@@ -48,18 +48,23 @@ function normalizeEntity(raw: Record<string, unknown>): QlooEntity | null {
   }
 
   const props = (raw.properties ?? {}) as Record<string, unknown>;
-  let imageUrl: string | undefined;
-  const images = props.images as unknown;
-  if (Array.isArray(images) && images.length) {
-    const first = images[0] as Record<string, unknown>;
-    imageUrl = (first.url as string) ?? (typeof first === "string" ? first : undefined);
-  }
-  imageUrl =
-    imageUrl ??
-    (raw.image_url as string) ??
-    (props.image_url as string) ??
-    (props.image as string) ??
-    undefined;
+  // Qloo nests image urls inconsistently (string | {url} | [{url}] | {url:{url}}) — always return a string
+  const pickUrl = (v: unknown): string | undefined => {
+    if (typeof v === "string") return v.startsWith("http") ? v : undefined;
+    if (Array.isArray(v)) {
+      for (const x of v) {
+        const u = pickUrl(x);
+        if (u) return u;
+      }
+      return undefined;
+    }
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      return pickUrl(o.url) ?? pickUrl(o.image) ?? pickUrl(o.src);
+    }
+    return undefined;
+  };
+  const imageUrl = pickUrl(props.images) ?? pickUrl(raw.image_url) ?? pickUrl(props.image_url) ?? pickUrl(props.image);
 
   const q = (raw.query ?? {}) as Record<string, unknown>;
   let explainability: Record<string, number> | undefined;

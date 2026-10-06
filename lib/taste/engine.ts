@@ -266,7 +266,14 @@ export async function nextBatch(session: {
   // In live mode, seed cards are first resolved to real Qloo entity ids, and
   // we query insights per-domain (liked + unexplored) so the batch stays
   // cross-domain instead of collapsing into one entity type.
-  const likedCardIds = decisive.filter((s) => s.interaction === "like").map((s) => s.entityId.replace(/^card:/, "")).slice(-12);
+  const allLikedIds = [...new Set(decisive.filter((s) => s.interaction === "like").map((s) => s.entityId.replace(/^card:/, "")))];
+  // seed Qloo with the freshest likes plus a rotating sample of older ones, so successive
+  // batches ask different questions of the graph and the feed doesn't run dry
+  const recent = allLikedIds.slice(-6);
+  const older = allLikedIds.slice(0, -6);
+  const rot = state.shownCardIds.length;
+  const sampled = older.length ? [0, 1, 2, 3].map((k) => older[(rot + k * 7) % older.length]) : [];
+  const likedCardIds = [...new Set([...recent, ...sampled])];
   const resolved = await resolveCardEntities(likedCardIds);
   const interestEntityIds = [...new Set(Object.values(resolved).map((r) => r.entityId))];
 
@@ -274,15 +281,24 @@ export async function nextBatch(session: {
   if (adapter.mode === "live" && interestEntityIds.length > 0) {
     const likedDomains = [...new Set(decisive.filter((s) => s.interaction === "like").map((s) => s.domain))];
     const unexplored = DOMAINS.filter((d) => !likedDomains.includes(d) && (state.domainWeights[d] ?? 0) === 0);
-    const targetDomains = [...likedDomains.slice(-2), ...unexplored.slice(0, 2)].slice(0, 4);
+    // rotate which domains we query so every batch brings different entity types
+    // destination/brand entities ship without images in Qloo and music cards are artist portraits —
+    // query only types that come with a photo so every live card can be shown
+    const NO_IMAGE_TYPES = new Set(["urn:entity:destination", "urn:entity:brand", "urn:entity:artist"]);
+    const pool = [...new Set([...likedDomains, ...unexplored, "film", "tv", "book", "game", "food", "art", "architecture"] as Domain[])].filter(
+      (d) => DOMAIN_TO_QLOO_TYPE[d] && !NO_IMAGE_TYPES.has(DOMAIN_TO_QLOO_TYPE[d]!)
+    );
+    const targetDomains = [0, 1, 2, 3, 4].map((k) => pool[(rot + k) % Math.max(1, pool.length)]).filter(Boolean);
+    const uniqueDomains = [...new Set(targetDomains)];
     const perDomain = await Promise.all(
-      targetDomains.map((d) =>
-        adapter.getRecommendations({ interests: interestEntityIds, domain: d, take: 4, excludeIds: likedCardIds })
+      uniqueDomains.map((d) =>
+        adapter.getRecommendations({ interests: interestEntityIds, domain: d, take: 40, excludeIds: likedCardIds })
       )
     );
     liveCards = perDomain.flatMap((r, i) =>
-      r.entities.map((e) => liveEntityToCard(e, targetDomains[i]))
+      r.entities.map((e) => liveEntityToCard(e, uniqueDomains[i]))
     );
+    liveCards = liveCards.filter((c) => typeof c.imageUrl === "string"); // never serve a card we can't picture
     registerLiveCards(liveCards);
   }
 
@@ -333,7 +349,7 @@ export async function nextBatch(session: {
 
   // Live-graph cards earn real slots: the Qloo suggestions ARE the point.
   const likedDomains = new Set(decisive.filter((s) => s.interaction === "like").map((s) => s.domain));
-  const liveSlots = Math.min(liveCards.length, 6, Math.floor(count / 2));
+  const liveSlots = Math.min(liveCards.length, Math.max(6, count - 4));
   const seedTarget = count - liveSlots;
 
   take("exploit", Math.min(targets.exploit, seedTarget));
