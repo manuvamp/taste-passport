@@ -170,9 +170,9 @@ export default function ProfilePage() {
       return i >= 0 ? pool.splice(i, 1)[0] : undefined;
     };
     const slots: [string, string[], string][] = [
-      ["Morning", ["food", "lifestyle"], "Start slow with this"],
-      ["Afternoon", ["art", "architecture", "travel"], "Lose an hour here"],
-      ["Evening", ["food", "lifestyle", "brand"], "Dinner, sorted"],
+      ["Morning", ["food"], "Start slow with this"],
+      ["Afternoon", ["art", "architecture", "travel", "lifestyle"], "Lose an hour here"],
+      ["Evening", ["food"], "Dinner, sorted"],
       ["Night", ["film", "tv", "book", "game"], "Wind down with this"],
     ];
     return slots.flatMap(([slot, doms, line]) => {
