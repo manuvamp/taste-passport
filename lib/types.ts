@@ -108,6 +108,10 @@ export type UnexpectedConnection = {
   /** Which of the user's entities Qloo/graph linked it to. */
   bridges: string[];
   qlooBacked: boolean;
+  /** Provenance of the inference: live Qloo graph vs deterministic local tags. */
+  source: "qloo" | "local";
+  /** Affinity strength 0..1 when the live graph provided one. */
+  affinity?: number;
 };
 
 export type TasteProfile = {

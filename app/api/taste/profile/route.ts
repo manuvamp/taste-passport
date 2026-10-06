@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, resolveSession } from "@/lib/session";
-import { applyInteraction, buildProfile, computeConfidence } from "@/lib/taste/engine";
+import { applyInteraction, buildProfile, computeConfidence, enrichConnectionsLive } from "@/lib/taste/engine";
 import { saveProfileVersion, saveSession, deleteSession } from "@/lib/store/db";
 import { cardsById } from "@/data/cards";
 import { getQlooAdapter } from "@/lib/qloo";
@@ -12,8 +12,10 @@ export async function GET(req: Request) {
   if (session.state.signals.length === 0) {
     return NextResponse.json({ error: "no taste signals yet" }, { status: 404 });
   }
-  const profile = buildProfile(session);
+  let profile = buildProfile(session);
   profile.confidence = computeConfidence(session.state);
+  // live mode: merge in live-graph cross-domain discoveries (no-op in mock)
+  profile = await enrichConnectionsLive(session, profile);
 
   // persist a new version when signals changed since last version
   const last = session.profileVersions[session.profileVersions.length - 1];
