@@ -3,9 +3,9 @@ import { ConnectAgent } from "@/components/connect-agent";
 import { VIBES } from "@/data/vibes";
 import vibeImages from "@/data/vibe-images.json";
 
-const IMAGES = vibeImages as Record<string, string>;
+const IMAGES = vibeImages as Record<string, string[]>;
 // decorative strip of real tiles from phase one (people-free, photo-backed)
-const STRIP = VIBES.filter((v) => IMAGES[v.id]).filter((_, i) => i % 5 === 0).slice(0, 16);
+const STRIP = VIBES.filter((v) => IMAGES[v.id]?.length).filter((_, i) => i % 5 === 0).slice(0, 16);
 
 const STEPS = [
   { n: "1", title: "Tap your vibes", body: "A wall of ~120 pictures — dishes, places, rooms, moods. Tap 20–30 that feel like you. About a minute, no typing." },
@@ -55,7 +55,7 @@ export default function Landing() {
               style={{ background: `hsl(${v.hue} 40% 18%)` }}
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={IMAGES[v.id]} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
+              <img src={IMAGES[v.id][0]} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
               <span className="absolute inset-x-0 bottom-0 px-1.5 pb-1 pt-4 text-[10px] bg-gradient-to-t from-black/80 to-transparent">{v.title}</span>
             </div>
           ))}

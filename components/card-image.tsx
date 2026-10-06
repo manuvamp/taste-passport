@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { TasteCard } from "@/lib/types";
 import { domainColor } from "@/components/domain";
+import CARD_IMAGES from "@/data/card-images.json";
 
 /**
  * Card image with graceful fallback: resolves a CC-licensed Wikipedia
@@ -12,6 +13,15 @@ import { domainColor } from "@/components/domain";
  */
 // Wikipedia lead images for these are portraits; we show an instant typographic tile instead
 const PORTRAIT_IDS = new Set(["kusama", "banksy", "basquiat", "kahlo", "murakami-takashi", "olafur-eliasson", "yohji-yamamoto", "vivienne-westwood", "rick-owens", "margiela"]);
+
+/**
+ * Direct photo URL for a card, or null when none is known. Live Qloo cards ship their own
+ * image; seed cards use the pre-resolved map (scripts/resolve-card-images.mjs) so the feed
+ * never waits on Wikipedia lookups.
+ */
+export function cardImageSrc(card: TasteCard): string | null {
+  return card.imageUrl ?? (CARD_IMAGES as Record<string, string>)[card.id] ?? null;
+}
 
 export function CardImage({ card, width = 640, alt, eager = false }: { card: TasteCard; width?: number; alt?: string; eager?: boolean }) {
   const [failed, setFailed] = useState(card.domain === "music" || PORTRAIT_IDS.has(card.id));
@@ -43,7 +53,7 @@ export function CardImage({ card, width = 640, alt, eager = false }: { card: Tas
   }
 
   // live Qloo entities ship their own image URLs; seed cards resolve via Wikipedia
-  const src = card.imageUrl ?? `/api/img?${new URLSearchParams({ title: card.wikiTitle ?? card.title, w: String(width) })}`;
+  const src = cardImageSrc(card) ?? `/api/img?${new URLSearchParams({ title: card.wikiTitle ?? card.title, w: String(width) })}`;
   return (
     <>
       {!loaded && (
