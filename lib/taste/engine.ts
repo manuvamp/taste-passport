@@ -206,6 +206,27 @@ export function scoreCandidates(
   return out.sort((a, b) => b.score - a.score);
 }
 
+/** How well a tag set fits the user's weighted taste vector (IDF-weighted cosine, 0..1). */
+export function tasteSimilarity(state: TasteState, tags: string[]): number {
+  const idf = tagIdf();
+  const user: Record<string, number> = {};
+  for (const sg of state.signals) {
+    if (sg.interaction === "skip") continue;
+    const c = cardsById().get(sg.cardId) ?? getLiveCard(sg.cardId);
+    if (!c) continue;
+    for (const t of c.tags) user[t] = (user[t] ?? 0) + sg.weight;
+  }
+  let dot = 0;
+  let cn = 0;
+  for (const t of tags) {
+    const w = idf[t] ?? 1;
+    cn += w * w;
+    dot += (user[t] ?? 0) * w * w;
+  }
+  const un = Math.sqrt(Object.entries(user).reduce((a, [t, w]) => a + (w * (idf[t] ?? 1)) ** 2, 0)) || 1;
+  return cn > 0 ? Math.max(0, dot / (Math.sqrt(cn) * un)) : 0;
+}
+
 let _idf: Record<string, number> | null = null;
 function tagIdf(): Record<string, number> {
   if (_idf) return _idf;
