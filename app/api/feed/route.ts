@@ -12,9 +12,10 @@ export async function GET(req: Request) {
   }
   const url = new URL(req.url);
   const count = Math.min(Number(url.searchParams.get("count") ?? 12), 24);
+  const domains = url.searchParams.get("domains")?.split(",").filter(Boolean).slice(0, 12);
   const session = await resolveSession(url.searchParams.get("sid") ?? undefined);
 
-  const { cards, adapted, pools } = await nextBatch(session, count);
+  const { cards, adapted, pools } = await nextBatch(session, count, domains);
   // round bumps once per batch served, so the client's "gallery wall N" logic
   // tracks what the user actually saw — not how many requests it took to serve
   await markShown(session, cards.map((c) => c.id), 1);

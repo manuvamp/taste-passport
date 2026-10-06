@@ -28,6 +28,7 @@ type FeedResponse = {
 
 const MIN_PICKS = 20;
 const IDEAL_PICKS = 30;
+const FEED_TARGET = 25; // picks in the feed before "Go deeper" is highlighted
 const POOL_LABEL: Record<ExplorationPool, string> = { exploit: "your taste", adjacent: "nearby", novel: "a surprise" };
 const IMAGES = vibeImages as Record<string, string[]>;
 
@@ -79,11 +80,43 @@ function LoadingScreen({ label, pct }: { label: string; pct?: number }) {
   );
 }
 
+function Spinner() {
+  return <div className="w-6 h-6 rounded-full border-2 border-[var(--hairline)] border-t-[var(--ink)] animate-spin" />;
+}
+
+const STEPS = ["Vibes", "Your feed", "Refine", "Your DNA"];
+
+function Steps({ current }: { current: number }) {
+  return (
+    <ol className="flex items-center gap-1.5 text-[11px] dim">
+      {STEPS.map((label, i) => (
+        <li key={label} className="flex items-center gap-1.5">
+          <span className={i === current ? "text-[var(--ink)] font-medium" : i < current ? "text-[var(--ink)] opacity-60" : ""}>
+            {i + 1} {label}
+          </span>
+          {i < STEPS.length - 1 && <span className="w-3 h-px bg-[var(--hairline)]" />}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** Keeps progress from ever moving backwards when a slow response lands after a newer one. */
+function mergeProgress(prev: Progress | null, next: Progress): Progress {
+  if (!prev) return next;
+  return {
+    ...next,
+    decisive: Math.max(prev.decisive, next.decisive),
+    interactions: Math.max(prev.interactions, next.interactions),
+    confidence: Math.max(prev.confidence, next.confidence),
+  };
+}
+
 /**
  * Calls `fn` whenever the sentinel is within `margin` px of the viewport — or while it isn't
  * mounted yet (loading screen), so the first batch keeps loading. Scroll + short poll.
  */
-function useNearBottom(ref: React.RefObject<HTMLElement | null>, fn: () => void, margin = 1400) {
+function useNearBottom(ref: React.RefObject<HTMLElement | null>, fn: () => void, margin = 3000) {
   const cb = useRef(fn);
   useEffect(() => {
     cb.current = fn;
@@ -94,7 +127,7 @@ function useNearBottom(ref: React.RefObject<HTMLElement | null>, fn: () => void,
       if (!el || el.getBoundingClientRect().top < window.innerHeight + margin) cb.current();
     };
     window.addEventListener("scroll", check, { passive: true });
-    const t = setInterval(check, 500);
+    const t = setInterval(check, 400);
     return () => {
       window.removeEventListener("scroll", check);
       clearInterval(t);
@@ -102,33 +135,34 @@ function useNearBottom(ref: React.RefObject<HTMLElement | null>, fn: () => void,
   }, [ref, margin]);
 }
 
+type Phase = "vibes" | "curated" | "deeper";
+
 export default function Discover() {
   const router = useRouter();
-  const [phase, setPhase] = useState<"vibes" | "curated" | null>(null);
+  const [phase, setPhase] = useState<Phase | null>(null);
 
   useEffect(() => {
-    setPhase(window.localStorage.getItem("tp_vibes_done") === "1" ? "curated" : "vibes");
+    const ls = window.localStorage;
+    setPhase(ls.getItem("tp_feed_done") === "1" ? "deeper" : ls.getItem("tp_vibes_done") === "1" ? "curated" : "vibes");
   }, []);
 
+  const go = (next: Phase, key: string) => {
+    window.localStorage.setItem(key, "1");
+    window.scrollTo({ top: 0 });
+    setPhase(next);
+  };
+
   if (!phase) return <main className="flex-1" />;
-  return phase === "vibes" ? (
-    <VibeWall
-      onDone={() => {
-        window.localStorage.setItem("tp_vibes_done", "1");
-        window.scrollTo({ top: 0 });
-        setPhase("curated");
-      }}
-    />
-  ) : (
-    <CuratedFeed onProfile={() => router.push("/profile")} />
-  );
+  if (phase === "vibes") return <VibeWall onDone={() => go("curated", "tp_vibes_done")} />;
+  if (phase === "curated") return <CuratedFeed onNext={() => go("deeper", "tp_feed_done")} />;
+  return <Chapters onProfile={() => router.push("/profile")} />;
 }
 
 /* ====================== PHASE 1 — vibe wall ====================== */
 
 type Tile = { key: string; id: string; title: string; src: string };
 
-/** Every photo of every theme, ordered so the same theme/domain never clusters. */
+/** Every photo of every theme, ordered so neither a theme nor a domain clusters; no photo twice. */
 function buildTiles(): Tile[] {
   const themes = VIBES.filter((v) => IMAGES[v.id]?.length);
   const buckets = new Map<string, typeof themes>();
@@ -137,10 +171,14 @@ function buildTiles(): Tile[] {
   const ordered: typeof themes = [];
   for (let i = 0; ordered.length < themes.length; i++) for (const l of lists) if (l[i]) ordered.push(l[i]);
   const out: Tile[] = [];
-  for (let r = 0; r < 12; r++)
+  const used = new Set<string>();
+  for (let r = 0; r < 24; r++)
     for (const v of ordered) {
       const src = IMAGES[v.id][r];
-      if (src) out.push({ key: `${v.id}~${r}`, id: v.id, title: v.title, src });
+      if (src && !used.has(src)) {
+        used.add(src);
+        out.push({ key: `${v.id}~${r}`, id: v.id, title: v.title, src });
+      }
     }
   return out;
 }
@@ -151,26 +189,29 @@ function VibeWall({ onDone }: { onDone: () => void }) {
   const tiles = useMemo(buildTiles, []);
   const [ready, setReady] = useState<Tile[]>([]);
   const [want, setWant] = useState(100); // how many tiles the wall should currently show
-  const [taken, setTaken] = useState<Set<string>>(new Set()); // tile keys already picked (removed)
-  const [picks, setPicks] = useState<string[]>([]); // theme ids picked
+  const [picked, setPicked] = useState<Set<string>>(new Set()); // themes already picked — gone for good
+  const [picks, setPicks] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const cursor = useRef(0);
   const inflight = useRef(0);
-  const loaded = useRef(0);
-  const takenCount = useRef(0);
+  const readyRef = useRef<Tile[]>([]);
+  const pickedRef = useRef(picked);
   const wantRef = useRef(want);
+  const visibleLen = useRef(0);
   const sentinel = useRef<HTMLDivElement | null>(null);
 
-  // keep a buffer of fully-loaded tiles ahead of what's visible
+  // keep a deep buffer of fully-loaded tiles ahead of what's on screen
   const pump = useCallback(() => {
-    while (inflight.current < 8 && cursor.current < tiles.length && loaded.current < wantRef.current + takenCount.current + 40) {
+    const available = () => readyRef.current.filter((t) => !pickedRef.current.has(t.id)).length;
+    while (inflight.current < 10 && cursor.current < tiles.length && available() + inflight.current < wantRef.current + 160) {
       const t = tiles[cursor.current++];
+      if (pickedRef.current.has(t.id)) continue;
       inflight.current++;
       preload(t.src).then((ok) => {
         inflight.current--;
         if (ok) {
-          loaded.current++;
-          setReady((r) => [...r, t]);
+          readyRef.current = [...readyRef.current, t];
+          setReady(readyRef.current);
         }
         pump();
       });
@@ -179,18 +220,24 @@ function VibeWall({ onDone }: { onDone: () => void }) {
 
   useEffect(() => {
     wantRef.current = want;
-    takenCount.current = taken.size;
+    pickedRef.current = picked;
     pump();
-  }, [want, taken, pump]);
+  }, [want, picked, pump]);
 
-  const visible = useMemo(() => ready.filter((t) => !taken.has(t.key)).slice(0, want), [ready, taken, want]);
+  // a picked theme disappears entirely, so nothing you already chose ever comes back
+  const visible = useMemo(() => ready.filter((t) => !picked.has(t.id)).slice(0, want), [ready, picked, want]);
+  useEffect(() => {
+    visibleLen.current = visible.length;
+  }, [visible]);
   const exhausted = cursor.current >= tiles.length && inflight.current === 0;
+  const loadingMore = visible.length < want && !exhausted;
 
-  useNearBottom(sentinel, () => setWant((w) => (w < ready.length - taken.size + 40 ? w + 40 : w)));
+  useNearBottom(sentinel, () => {
+    if (visibleLen.current >= wantRef.current - 12) setWant((w) => w + 60);
+  });
 
   const pick = useCallback((t: Tile) => {
-    // tile disappears; the next preloaded one slides into its place
-    setTaken((s) => new Set(s).add(t.key));
+    setPicked((s) => new Set(s).add(t.id));
     setPicks((p) => [...p, t.id]);
   }, []);
 
@@ -211,9 +258,10 @@ function VibeWall({ onDone }: { onDone: () => void }) {
   return (
     <main className="flex-1 flex flex-col">
       <div className="px-3 sm:px-8 pt-4 pb-3 max-w-7xl mx-auto w-full">
-        <h1 className="font-display text-2xl sm:text-3xl">Tap what feels like you.</h1>
+        <Steps current={0} />
+        <h1 className="font-display text-2xl sm:text-3xl mt-2">Tap what feels like you.</h1>
         <p className="dim text-sm mt-1">
-          Each pick swaps in a new picture. Choose {MIN_PICKS}–{IDEAL_PICKS} you&apos;d love — keep scrolling for more.
+          Each pick swaps in something new. Choose {MIN_PICKS}–{IDEAL_PICKS} you&apos;d love — keep scrolling, there&apos;s plenty more.
         </p>
       </div>
 
@@ -223,7 +271,10 @@ function VibeWall({ onDone }: { onDone: () => void }) {
             <VibeTile key={t.key} tile={t} onPick={pick} />
           ))}
         </div>
-        <div ref={sentinel} className="h-10" />
+        <div ref={sentinel} className="h-16 flex items-center justify-center">
+          {loadingMore && <Spinner />}
+          {exhausted && <p className="dim text-sm">That&apos;s the whole wall — continue when you&apos;re ready.</p>}
+        </div>
       </div>
 
       <div className="fixed bottom-0 inset-x-0 z-30 border-t hairline bg-[var(--bg)]/92 backdrop-blur-md px-4 sm:px-8 py-3">
@@ -270,110 +321,197 @@ const VibeTile = memo(function VibeTile({ tile, onPick }: { tile: Tile; onPick: 
   );
 });
 
-/* ====================== PHASE 2 — curated infinite feed ====================== */
+/* ====================== shared: buffered, photo-only card source ====================== */
 
 // Cards whose lead photo is a portrait are dropped: no faces, and no image-less cards.
 const PORTRAIT_IDS = new Set(["kusama", "banksy", "basquiat", "kahlo", "murakami-takashi", "olafur-eliasson", "yohji-yamamoto", "vivienne-westwood", "rick-owens", "margiela"]);
 const noPhoto = (c: TasteCard) => c.domain === "music" || PORTRAIT_IDS.has(c.id) || !cardImageSrc(c);
 
-const FIRST_FEED = 8;
-
-function CuratedFeed({ onProfile }: { onProfile: () => void }) {
-  const [cards, setCards] = useState<TasteCard[]>([]);
-  const [pools, setPools] = useState<Record<string, ExplorationPool>>({});
-  const [progress, setProgress] = useState<Progress | null>(null);
-  const [mode, setMode] = useState("mock");
-  const [done, setDone] = useState(false);
+/**
+ * Pulls batches from the adaptive feed in the background, preloads every photo, and queues only
+ * fully-loaded cards. `take(n)` hands the UI cards that are guaranteed to paint instantly.
+ */
+function useCardSource(target: number, onProgress?: (p: Progress, mode: string) => void, domains?: string[]) {
+  const domainQuery = domains?.length ? `&domains=${domains.join(",")}` : "";
+  const buffer = useRef<TasteCard[]>([]);
+  const seen = useRef(new Set<string>());
+  const pools = useRef<Record<string, ExplorationPool>>({});
   const fetching = useRef(false);
   const emptyStreak = useRef(0);
-  const sentinel = useRef<HTMLDivElement | null>(null);
-  const seen = useRef(new Set<string>());
+  const [exhausted, setExhausted] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [ticks, setTicks] = useState(0); // bumps when new cards land in the buffer
+  const cb = useRef(onProgress);
+  useEffect(() => {
+    cb.current = onProgress;
+  });
 
-  const loadMore = useCallback(async () => {
+  const fetchBatch = useCallback(async () => {
     if (fetching.current) return;
     fetching.current = true;
+    setLoading(true);
     try {
       await fetch("/api/session", { method: "POST" }).catch(() => {});
-      const res = await fetch("/api/feed?count=20");
+      const res = await fetch(`/api/feed?count=24${domainQuery}`);
       const data = (await res.json()) as FeedResponse;
-      setProgress(data.progress);
-      setMode(data.mode);
-      setPools((prev) => ({ ...prev, ...data.pools }));
+      cb.current?.(data.progress, data.mode);
+      Object.assign(pools.current, data.pools);
       // dedupe by id and by title (live Qloo cards can twin seed cards)
       const fresh = data.cards.filter((c) => !seen.current.has(c.id) && !seen.current.has(c.title.toLowerCase()));
       fresh.forEach((c) => {
         seen.current.add(c.id);
         seen.current.add(c.title.toLowerCase());
       });
-      // only cards whose photo is fully loaded ever reach the screen
       const withPhoto = fresh.filter((c) => !noPhoto(c));
       const ok = await Promise.all(withPhoto.map((c) => preload(cardImageSrc(c)!)));
-      const shown = withPhoto.filter((_, i) => ok[i]);
-      emptyStreak.current = shown.length === 0 ? emptyStreak.current + 1 : 0;
-      if (emptyStreak.current >= 8) setDone(true); // the graph rotates seeds each call, so a few empty batches in a row are normal
-      if (shown.length) setCards((prev) => [...prev, ...shown]);
+      const good = withPhoto.filter((_, i) => ok[i]);
+      emptyStreak.current = good.length === 0 ? emptyStreak.current + 1 : 0;
+      if (emptyStreak.current >= 8) setExhausted(true); // seeds rotate per call, so a few empty batches in a row are normal
+      if (good.length) {
+        // interleave domains so neighbouring cards never feel samey
+        const lanes = new Map<string, TasteCard[]>();
+        for (const c of good) lanes.set(c.domain, [...(lanes.get(c.domain) ?? []), c]);
+        const mixed: TasteCard[] = [];
+        for (let i = 0; mixed.length < good.length; i++) for (const l of lanes.values()) if (l[i]) mixed.push(l[i]);
+        buffer.current.push(...mixed);
+        setTicks((t) => t + 1);
+      }
     } catch {
-      // transient: the next near-bottom check retries
+      // transient: the next tick retries
     } finally {
       fetching.current = false;
+      setLoading(false);
     }
-  }, []);
+  }, [domainQuery]);
+
+  // keep ~target cards queued so scrolling never waits on the network
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (!exhausted && buffer.current.length < target) fetchBatch();
+    }, 350);
+    return () => clearInterval(t);
+  }, [exhausted, target, fetchBatch]);
+
+  const take = useCallback((n: number) => buffer.current.splice(0, n), []);
+  const buffered = useCallback(() => buffer.current.length, []);
+  return { take, buffered, pools, exhausted, loading, ticks };
+}
+
+/* ====================== PHASE 2 — curated infinite feed ====================== */
+
+const FIRST_FEED = 12;
+
+type FeedProps = {
+  onNext: () => void;
+  domains?: string[];
+  goal?: number;
+  step?: number;
+  nextLabel?: string;
+  heading?: string;
+  blurb?: string;
+};
+
+function CuratedFeed({ onNext, domains, goal = FEED_TARGET, step = 1, nextLabel = "Go deeper →", heading, blurb }: FeedProps) {
+  const [cards, setCards] = useState<TasteCard[]>([]);
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const [mode, setMode] = useState("mock");
+  const [likes, setLikes] = useState(0);
+  const sentinel = useRef<HTMLDivElement | null>(null);
+  const lenRef = useRef(0);
+
+  const src = useCardSource(48, (p, m) => {
+    setProgress((prev) => mergeProgress(prev, p));
+    setMode(m);
+  }, domains);
+  const { take, buffered, exhausted, loading, ticks } = src;
 
   useEffect(() => {
-    loadMore();
-  }, [loadMore]);
+    lenRef.current = cards.length;
+  }, [cards]);
 
-  // keep fetching until the first screen is full, and whenever the user nears the end
-  useNearBottom(sentinel, () => !done && loadMore());
+  const reveal = useCallback(
+    (n: number) => {
+      const next = take(n);
+      if (next.length) setCards((prev) => [...prev, ...next]);
+    },
+    [take]
+  );
+
+  // keep the grid topped up as cards are liked away, and add more whenever the user nears the end
+  useEffect(() => {
+    if (lenRef.current < FIRST_FEED + 4 && buffered() > 0) reveal(12);
+  }, [ticks, cards.length, buffered, reveal]);
+  useNearBottom(sentinel, () => {
+    if (buffered() > 0) reveal(12);
+  });
 
   const like = useCallback((card: TasteCard) => {
-    // positive-only: card disappears, the next one slides in
     setCards((prev) => prev.filter((c) => c.id !== card.id));
-    postLikes([card.id], [card]).then((p) => p && setProgress(p));
+    setLikes((n) => n + 1);
+    postLikes([card.id], [card]).then((p) => p && setProgress((prev) => mergeProgress(prev, p)));
   }, []);
 
-  const decisive = progress?.decisive ?? 0;
-  const pct = Math.round((progress?.confidence ?? 0) * 100);
+  const pct = Math.min(100, Math.round((likes / goal) * 100));
+  const ready = likes >= goal;
 
-  if (cards.length < FIRST_FEED && !done) return <LoadingScreen label="Curating your feed…" />;
+  if (cards.length < FIRST_FEED && !exhausted) return <LoadingScreen label="Curating your feed…" />;
 
   return (
     <main className="flex-1 flex flex-col">
       <div className="sticky top-[57px] z-30 bg-[var(--bg)]/90 backdrop-blur-md border-b hairline">
         <div className="px-4 sm:px-8 py-2.5 flex items-center gap-4 max-w-6xl mx-auto w-full">
           <div className="flex-1 min-w-0">
-            <div className="flex justify-between text-xs dim mb-1.5">
-              <span>{decisive} picks · {progress?.confidenceLabel ?? "…"}</span>
-              <span>{pct}% confidence</span>
+            <div className="flex justify-between items-center text-xs dim mb-1.5 gap-3">
+              <Steps current={step} />
+              <span className="whitespace-nowrap">{ready ? "Range captured" : `${likes} / ${goal}`}</span>
             </div>
             <div className="h-1 rounded-full bg-[var(--hairline)] overflow-hidden">
               <div className="h-full rounded-full bg-[var(--like)] transition-all duration-500" style={{ width: `${pct}%` }} />
             </div>
           </div>
-          <button onClick={onProfile} className="btn-primary text-sm !py-2 !px-4 whitespace-nowrap">
-            My Taste DNA →
+          <button onClick={onNext} className={`text-sm !py-2 !px-4 whitespace-nowrap ${ready ? "btn-primary" : "btn-ghost"}`}>
+            {nextLabel}
           </button>
         </div>
       </div>
 
       <section className="px-3 sm:px-8 pt-4 pb-24 max-w-6xl mx-auto w-full">
-        <p className="text-center dim text-sm mb-4">Tap what you love — it swaps for something new. Keep scrolling for more.</p>
+        {ready ? (
+          <div className="panel-soft p-4 mb-4 text-center">
+            <p className="font-display text-xl">That&apos;s a solid read of you.</p>
+            <p className="dim text-sm mt-1 mb-3">{domains ? "Enough here — move on whenever you like." : "Next, we narrow in on one part of life at a time."}</p>
+            <button onClick={onNext} className="btn-primary text-sm">
+              {nextLabel}
+            </button>
+          </div>
+        ) : (
+          <div className="text-center mb-4">
+            {heading && <h1 className="font-display text-2xl sm:text-3xl mb-1">{heading}</h1>}
+            <p className="dim text-sm">{blurb ?? "Tap what you love — it swaps for something new. Keep scrolling for more."}</p>
+          </div>
+        )}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3">
           {cards.map((card) => (
-            <FeedCard key={card.id} card={card} pool={pools[card.id]} onLike={like} />
+            <FeedCard key={card.id} card={card} pool={src.pools.current[card.id]} onLike={like} />
           ))}
         </div>
-        <div ref={sentinel} className="h-10" />
-        {done && (
-          <div className="text-center py-10">
+        <div ref={sentinel} className="h-20 flex items-center justify-center">
+          {loading && !exhausted && <Spinner />}
+        </div>
+        {exhausted && (
+          <div className="text-center pb-10">
             <p className="font-display text-2xl mb-2">You&apos;ve seen everything we have.</p>
-            <p className="dim text-sm mb-5">That&apos;s plenty — your taste profile is ready for your agents.</p>
-            <button onClick={onProfile} className="btn-primary text-sm">See my Taste DNA →</button>
+            <button onClick={onNext} className="btn-primary text-sm">
+              {nextLabel}
+            </button>
           </div>
         )}
       </section>
 
-      <p className="fixed bottom-1.5 right-3 text-[10px] dim z-20">taste graph: {mode === "live" ? "live" : "offline"}</p>
+      <p className="fixed bottom-1.5 right-3 text-[10px] dim z-20">
+        taste graph: {mode === "live" ? "live" : "offline"}
+        {progress ? ` · ${progress.confidenceLabel}` : ""}
+      </p>
     </main>
   );
 }
@@ -404,3 +542,42 @@ const FeedCard = memo(function FeedCard({ card, pool, onLike }: { card: TasteCar
     </button>
   );
 });
+
+/* ====================== PHASE 3 — three focused chapters ====================== */
+
+const CHAPTERS = [
+  { title: "Screen & page", blurb: "Films, series, books and games — tap the ones you'd happily lose a weekend to.", domains: ["film", "tv", "book", "game"] },
+  { title: "Table & travel", blurb: "Meals, places and rituals — tap what you'd book, visit or make time for.", domains: ["food", "travel", "lifestyle"] },
+  { title: "Look & space", blurb: "Fashion, art, buildings and brands — tap what looks like you.", domains: ["fashion", "art", "architecture", "brand"] },
+];
+
+function Chapters({ onProfile }: { onProfile: () => void }) {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    const saved = Number(window.localStorage.getItem("tp_chapter") ?? 0);
+    if (saved > 0 && saved < CHAPTERS.length) setI(saved);
+  }, []);
+  const ch = CHAPTERS[i];
+  const last = i === CHAPTERS.length - 1;
+  return (
+    <CuratedFeed
+      key={i}
+      step={2}
+      domains={ch.domains}
+      goal={8}
+      heading={`${ch.title} · ${i + 1} of ${CHAPTERS.length}`}
+      blurb={ch.blurb}
+      nextLabel={last ? "See my Taste DNA →" : `Next: ${CHAPTERS[i + 1].title} →`}
+      onNext={() => {
+        window.scrollTo({ top: 0 });
+        if (last) {
+          window.localStorage.removeItem("tp_chapter");
+          onProfile();
+        } else {
+          window.localStorage.setItem("tp_chapter", String(i + 1));
+          setI(i + 1);
+        }
+      }}
+    />
+  );
+}
