@@ -251,6 +251,20 @@ export async function nextBatch(session: {
   }
   for (const c of SEED_CARDS) if (seenTitles.has(c.title.toLowerCase())) seen.add(c.id);
 
+  // Endless feed: when the unseen, photo-bearing cards (in the requested domains) run low, start a new
+  // lap — anything already shown but NOT picked may come around again; picked cards stay excluded.
+  const unseen = SEED_CARDS.filter((c) => !seen.has(c.id) && c.domain !== "music" && imageFor(c) && (!onlyDomains || onlyDomains.includes(c.domain)));
+  if (unseen.length < 24 && state.signals.length > 0) {
+    seen.clear();
+    seenTitles.clear();
+    for (const sg of state.signals) {
+      seen.add(sg.cardId);
+      const t = cardsById().get(sg.cardId)?.title ?? getLiveCard(sg.cardId)?.title;
+      if (t) seenTitles.add(t.toLowerCase());
+    }
+    for (const c of SEED_CARDS) if (seenTitles.has(c.title.toLowerCase())) seen.add(c.id);
+  }
+
   if (state.signals.length === 0) {
     // never repeat a card already shown — clicking "next" on the gallery must
     // deal a fresh wall even before any interaction was recorded. Round-robin
