@@ -86,7 +86,9 @@ export default function Landing() {
       <footer className="px-5 sm:px-8 py-8 border-t hairline flex flex-wrap gap-6 justify-between text-xs dim">
         <span>Taste Passport · built for the Qloo Agentic Hackathon</span>
         <span className="flex gap-5">
+          <Link href="/eval" className="hover:text-[var(--ink)]">Live evaluation</Link>
           <Link href="/api/taste/profile" className="hover:text-[var(--ink)]">Profile API</Link>
+          <Link href="/api/mcp" className="hover:text-[var(--ink)]">MCP endpoint</Link>
           <Link href="/dev" className="hover:text-[var(--ink)]">Dev dashboard</Link>
         </span>
       </footer>
