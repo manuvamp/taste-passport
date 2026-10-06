@@ -9,6 +9,7 @@ import type {
 } from "@/lib/types";
 import { DOMAINS, DOMAIN_TO_QLOO_TYPE } from "@/lib/types";
 import { COLD_START_IDS, SEED_CARDS, cardsById } from "@/data/cards";
+import { isVibe } from "@/data/vibes";
 import { mockAffinity, tagAffinity } from "@/lib/qloo/mock";
 import { getQlooAdapter } from "@/lib/qloo";
 import { resolveCardEntities } from "@/lib/qloo/resolve";
@@ -267,29 +268,36 @@ export async function nextBatch(session: {
   // we query insights per-domain (liked + unexplored) so the batch stays
   // cross-domain instead of collapsing into one entity type.
   const allLikedIds = [...new Set(decisive.filter((s) => s.interaction === "like").map((s) => s.entityId.replace(/^card:/, "")))];
-  // seed Qloo with the freshest likes plus a rotating sample of older ones, so successive
-  // batches ask different questions of the graph and the feed doesn't run dry
-  const recent = allLikedIds.slice(-6);
-  const older = allLikedIds.slice(0, -6);
   const rot = state.shownCardIds.length;
-  const sampled = older.length ? [0, 1, 2, 3].map((k) => older[(rot + k * 7) % older.length]) : [];
-  const likedCardIds = [...new Set([...recent, ...sampled])];
+  // Vibe picks ("Sushi", "Zen garden") are generic, so searching Qloo for them yields junk entities.
+  // Translate them into their closest real seed entities (Kaiseki, Ryōan-ji…) by tag similarity and
+  // use those as the graph's interests instead.
+  const likedSeedIds = allLikedIds.filter((id) => !isVibe(id));
+  const likedVibes = allLikedIds.filter(isVibe).map((id) => cardsById().get(id)!).filter(Boolean);
+  const proxyScore: Record<string, number> = {};
+  for (const v of likedVibes) {
+    const vt = new Set(v.tags);
+    for (const c of SEED_CARDS) {
+      if (likedSeedIds.includes(c.id)) continue;
+      const a = tagAffinity(vt, new Set(c.tags));
+      if (a > 0) proxyScore[c.id] = (proxyScore[c.id] ?? 0) + a;
+    }
+  }
+  const proxies = Object.entries(proxyScore).sort((x, y) => y[1] - x[1]).slice(0, 14).map(([id]) => id);
+  // rotate a window over the proxies and older likes so successive batches ask the graph
+  // different (but taste-consistent) questions and the feed doesn't run dry
+  const win = (arr: string[], n: number) => (arr.length <= n ? arr : Array.from({ length: n }, (_, k) => arr[(rot * 3 + k) % arr.length]));
+  const likedCardIds = [...new Set([...likedSeedIds.slice(-6), ...win(likedSeedIds.slice(0, -6), 3), ...win(proxies, 5)])];
   const resolved = await resolveCardEntities(likedCardIds);
   const interestEntityIds = [...new Set(Object.values(resolved).map((r) => r.entityId))];
 
   let liveCards: TasteCard[] = [];
   if (adapter.mode === "live" && interestEntityIds.length > 0) {
-    const likedDomains = [...new Set(decisive.filter((s) => s.interaction === "like").map((s) => s.domain))];
-    const unexplored = DOMAINS.filter((d) => !likedDomains.includes(d) && (state.domainWeights[d] ?? 0) === 0);
-    // rotate which domains we query so every batch brings different entity types
-    // destination/brand entities ship without images in Qloo and music cards are artist portraits —
-    // query only types that come with a photo so every live card can be shown
-    const NO_IMAGE_TYPES = new Set(["urn:entity:destination", "urn:entity:brand", "urn:entity:artist"]);
-    const pool = [...new Set([...likedDomains, ...unexplored, "film", "tv", "book", "game", "food", "art", "architecture"] as Domain[])].filter(
-      (d) => DOMAIN_TO_QLOO_TYPE[d] && !NO_IMAGE_TYPES.has(DOMAIN_TO_QLOO_TYPE[d]!)
-    );
-    const targetDomains = [0, 1, 2, 3, 4].map((k) => pool[(rot + k) % Math.max(1, pool.length)]).filter(Boolean);
-    const uniqueDomains = [...new Set(targetDomains)];
+    // Cross-domain jump is the point: ask for film / tv / games that fit the taste.
+    // (Qloo's generic "place" type returns hotels and bars, destinations/brands ship without photos,
+    // and artists are portraits — so those stay with the curated seed cards.)
+    const LIVE_DOMAINS: Domain[] = ["film", "tv", "game"]; // live books skew to non-fiction/memoir — curated seed books are better
+    const uniqueDomains = [...new Set([0, 1, 2].map((k) => LIVE_DOMAINS[(rot + k) % LIVE_DOMAINS.length]))];
     const perDomain = await Promise.all(
       uniqueDomains.map((d) =>
         adapter.getRecommendations({ interests: interestEntityIds, domain: d, take: 40, excludeIds: likedCardIds })
@@ -349,7 +357,7 @@ export async function nextBatch(session: {
 
   // Live-graph cards earn real slots: the Qloo suggestions ARE the point.
   const likedDomains = new Set(decisive.filter((s) => s.interaction === "like").map((s) => s.domain));
-  const liveSlots = Math.min(liveCards.length, Math.max(6, count - 4));
+  const liveSlots = Math.min(liveCards.length, Math.ceil(count * 0.4));
   const seedTarget = count - liveSlots;
 
   take("exploit", Math.min(targets.exploit, seedTarget));
@@ -371,12 +379,19 @@ export async function nextBatch(session: {
     const t = cardsById().get(id)?.title ?? getLiveCard(id)?.title;
     if (t) pickedTitles.add(t.toLowerCase());
   }
-  for (const lc of liveCards) {
-    if (picked.length >= count) break;
-    if (seen.has(lc.id) || pickedTitles.has(lc.title.toLowerCase())) continue;
-    pickedTitles.add(lc.title.toLowerCase());
-    picked.push(lc);
-    pools[lc.id] = likedDomains.has(lc.domain) ? "exploit" : "adjacent";
+  // live cards keep Qloo's affinity order; cap per domain so one type can't flood a batch
+  // (relaxed only when the curated seeds are exhausted)
+  const liveDom: Record<string, number> = {};
+  for (const cap of [Math.ceil(count / 4), count]) {
+    for (const lc of liveCards) {
+      if (picked.length >= count) break;
+      if (seen.has(lc.id) || pickedTitles.has(lc.title.toLowerCase())) continue;
+      if ((liveDom[lc.domain] ?? 0) >= cap) continue;
+      pickedTitles.add(lc.title.toLowerCase());
+      liveDom[lc.domain] = (liveDom[lc.domain] ?? 0) + 1;
+      picked.push(lc);
+      pools[lc.id] = likedDomains.has(lc.domain) ? "exploit" : "adjacent";
+    }
   }
 
   return { cards: picked.slice(0, count), adapted: true, pools };
