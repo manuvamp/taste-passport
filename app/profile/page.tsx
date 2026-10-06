@@ -268,9 +268,9 @@ export default function ProfilePage() {
           <h2 className="text-sm uppercase tracking-[0.18em] dim mb-4">A day made for you</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             {day.map((d) => (
-              <div key={d.slot} className="relative aspect-[4/5] rounded-2xl overflow-hidden bg-[var(--bg-softer)]">
+              <div key={d.slot} data-tile className="relative aspect-[4/5] rounded-2xl overflow-hidden bg-[var(--bg-softer)]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={d.imageUrl} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
+                <img src={d.imageUrl} alt="" referrerPolicy="no-referrer" onError={(e) => ((e.currentTarget.closest("[data-tile]") as HTMLElement | null)?.style.setProperty("display", "none"))} className="absolute inset-0 w-full h-full object-cover" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
                 <div className="absolute top-2.5 left-2.5 text-[10px] uppercase tracking-[0.18em] rounded-full px-2 py-0.5 bg-black/55 backdrop-blur-sm">{d.slot}</div>
                 <div className="absolute inset-x-0 bottom-0 p-3">
@@ -468,10 +468,10 @@ function BoardTile({
   hide: (id: string) => void;
 }) {
   return (
-    <div className="relative aspect-square rounded-xl overflow-hidden bg-[var(--bg-softer)]">
+    <div data-tile className="relative aspect-square rounded-xl overflow-hidden bg-[var(--bg-softer)]">
       <button type="button" onClick={() => setOpen(open === g.cardId ? null : g.cardId)} className="absolute inset-0 w-full h-full" aria-label={g.title}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={g.imageUrl} alt="" referrerPolicy="no-referrer" className="w-full h-full object-cover" />
+        <img src={g.imageUrl} alt="" referrerPolicy="no-referrer" onError={(e) => ((e.currentTarget.closest("[data-tile]") as HTMLElement | null)?.style.setProperty("display", "none"))} className="w-full h-full object-cover" />
       </button>
       {g.kind === "suggest" && <span className="absolute top-1 left-1 text-[9px] rounded-full px-1.5 py-0.5 bg-black/60 backdrop-blur-sm">for you</span>}
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-1.5 pt-6 pointer-events-none">
@@ -519,9 +519,9 @@ function RecRow({ s }: { s: RecSection }) {
         <div className="flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none]">
           {s.items.map((i) =>
             i.imageUrl ? (
-              <div key={i.title} className="relative shrink-0 w-36 sm:w-44 aspect-[3/4] rounded-2xl overflow-hidden bg-[var(--bg-softer)]">
+              <div key={i.title} data-tile className="relative shrink-0 w-36 sm:w-44 aspect-[3/4] rounded-2xl overflow-hidden bg-[var(--bg-softer)]">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={i.imageUrl} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
+                <img src={i.imageUrl} alt="" referrerPolicy="no-referrer" onError={(e) => ((e.currentTarget.closest("[data-tile]") as HTMLElement | null)?.style.setProperty("display", "none"))} className="absolute inset-0 w-full h-full object-cover" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-transparent" />
                 <div className="absolute inset-x-0 bottom-0 p-3">
                   <p className="font-display text-sm leading-tight">{i.title}</p>
