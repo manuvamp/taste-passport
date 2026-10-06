@@ -251,20 +251,6 @@ export async function nextBatch(session: {
   }
   for (const c of SEED_CARDS) if (seenTitles.has(c.title.toLowerCase())) seen.add(c.id);
 
-  // Endless feed: when the unseen, photo-bearing cards (in the requested domains) run low, start a new
-  // lap — anything already shown but NOT picked may come around again; picked cards stay excluded.
-  const unseen = SEED_CARDS.filter((c) => !seen.has(c.id) && c.domain !== "music" && imageFor(c) && (!onlyDomains || onlyDomains.includes(c.domain)));
-  if (unseen.length < 24 && state.signals.length > 0) {
-    seen.clear();
-    seenTitles.clear();
-    for (const sg of state.signals) {
-      seen.add(sg.cardId);
-      const t = cardsById().get(sg.cardId)?.title ?? getLiveCard(sg.cardId)?.title;
-      if (t) seenTitles.add(t.toLowerCase());
-    }
-    for (const c of SEED_CARDS) if (seenTitles.has(c.title.toLowerCase())) seen.add(c.id);
-  }
-
   if (state.signals.length === 0) {
     // never repeat a card already shown — clicking "next" on the gallery must
     // deal a fresh wall even before any interaction was recorded. Round-robin
@@ -437,6 +423,22 @@ export async function nextBatch(session: {
     }
   }
 
+  // Endless feed: only when fresh cards genuinely run out do we start another lap — oldest-shown
+  // first, never anything the user already picked, and always with a photo.
+  if (picked.length < Math.ceil(count / 2)) {
+    const liked = new Set(state.signals.map((sg) => sg.cardId));
+    const have = new Set(picked.map((c) => c.id));
+    for (const id of state.shownCardIds) {
+      if (picked.length >= count) break;
+      const c = cardsById().get(id) ?? getLiveCard(id);
+      if (!c || have.has(id) || liked.has(id) || isVibe(id) || c.domain === "music" || !imageFor(c)) continue;
+      if (onlyDomains && !onlyDomains.includes(c.domain)) continue;
+      picked.push(c);
+      have.add(id);
+      pools[id] = "adjacent";
+    }
+  }
+
   return { cards: picked.slice(0, count), adapted: true, pools };
 }
 
@@ -492,6 +494,23 @@ export function deriveArchetype(tagVector: Record<string, number>): { name: stri
     return { name: `Emerging ${t}`, description: "your taste is still forming — keep going" };
   }
   return { name: best.a.name, description: best.a.description };
+}
+
+const AXES: { left: string; right: string; a: string[]; b: string[] }[] = [
+  { left: "Calm", right: "Electric", a: ["quiet", "calm", "zen", "minimal", "slow", "meditative", "silence", "cozy", "ritual"], b: ["neon", "loud", "night", "energetic", "vibrant", "kinetic", "strobe", "street", "playful"] },
+  { left: "Timeless", right: "Futuristic", a: ["classic", "timeless", "nostalgic", "retro", "analog", "vintage", "faded", "literary"], b: ["futuristic", "tech", "sci-fi", "retro-future", "digital", "modular", "machine", "immersive"] },
+  { left: "Handmade", right: "Precise", a: ["handmade", "craft", "artisan", "rustic", "organic", "earthy", "textile", "wood"], b: ["precise", "precision", "rational", "geometric", "technical", "modernist", "functional", "industrial"] },
+  { left: "Understated", right: "Maximal", a: ["minimal", "quiet-luxury", "restrained", "austere", "simple", "monochrome", "white"], b: ["maximal", "ornate", "colorful", "pop", "luxury", "golden", "loud", "pastel"] },
+  { left: "Cozy", right: "Adventurous", a: ["cozy", "warm", "domestic", "comfort", "intimate", "social"], b: ["remote", "epic", "dramatic", "raw", "gritty", "adventure", "mountain", "wonder"] },
+];
+
+function computeAxes(tagVector: Record<string, number>) {
+  return AXES.map((ax) => {
+    const sum = (tags: string[]) => tags.reduce((acc, t) => acc + Math.max(0, tagVector[t] ?? 0), 0);
+    const l = sum(ax.a);
+    const r = sum(ax.b);
+    return { left: ax.left, right: ax.right, value: Math.round(((r + 0.5) / (l + r + 1)) * 100) / 100 };
+  });
 }
 
 export function buildProfile(session: {
@@ -627,6 +646,7 @@ export function buildProfile(session: {
     coreEntities,
     gallery,
     suggestions,
+    axes: computeAxes(state.tagVector),
     positiveSignals: coreEntities.map((e) => ({ ...e, weight: entityWeight[e.cardId] ?? 0 })),
     negativeSignals: dislikes
       .slice(0, 6)

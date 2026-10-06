@@ -7,6 +7,8 @@ import { cardImageSrc } from "@/components/card-image";
 import { domainColor } from "@/components/domain";
 import { VIBES } from "@/data/vibes";
 import vibeImages from "@/data/vibe-images.json";
+import cardImages from "@/data/card-images.json";
+import { cardsById } from "@/data/cards";
 
 type Progress = {
   interactions: number;
@@ -120,37 +122,57 @@ function useSlots<T>(next: () => T | undefined, keyOf: (t: T) => string) {
   const [slots, setSlots] = useState<T[]>([]);
   const [leaving, setLeaving] = useState<Set<string>>(new Set());
   const lenRef = useRef(0);
+  const keys = useRef(new Set<string>());
   useEffect(() => {
     lenRef.current = slots.length;
   }, [slots]);
+  // next item whose key isn't already on screen (recycled cards can come back while still visible)
+  const fresh = useCallback((): T | undefined => {
+    for (let i = 0; i < 40; i++) {
+      const t = next();
+      if (t === undefined) return undefined;
+      if (!keys.current.has(keyOf(t))) {
+        keys.current.add(keyOf(t));
+        return t;
+      }
+    }
+    return undefined;
+  }, [next, keyOf]);
   const fillTo = useCallback(
     (n: number) => {
       const add: T[] = [];
       while (lenRef.current + add.length < n) {
-        const t = next();
+        const t = fresh();
         if (t === undefined) break;
         add.push(t);
       }
       if (add.length) setSlots((prev) => [...prev, ...add]);
     },
-    [next]
+    [fresh]
+  );
+  const swap = useCallback(
+    (key: string, withNext: boolean) => {
+      keys.current.delete(key);
+      const t = withNext ? fresh() : undefined; // outside the updater: React may run updaters twice in dev
+      setSlots((prev) => prev.flatMap((x) => (keyOf(x) === key ? (t === undefined ? [] : [t]) : [x])));
+      setLeaving((l) => {
+        const n = new Set(l);
+        n.delete(key);
+        return n;
+      });
+    },
+    [fresh, keyOf]
   );
   const replaceAt = useCallback(
     (key: string) => {
       setLeaving((l) => new Set(l).add(key));
-      setTimeout(() => {
-        const t = next(); // outside the updater: React may run updaters twice in dev
-        setSlots((prev) => prev.flatMap((x) => (keyOf(x) === key ? (t === undefined ? [] : [t]) : [x])));
-        setLeaving((l) => {
-          const n = new Set(l);
-          n.delete(key);
-          return n;
-        });
-      }, 220);
+      setTimeout(() => swap(key, true), 220);
     },
-    [next, keyOf]
+    [swap]
   );
-  return { slots, leaving, fillTo, replaceAt };
+  /** Drop an item immediately (e.g. its image failed) and fill the gap. */
+  const dropAt = useCallback((key: string) => swap(key, true), [swap]);
+  return { slots, leaving, fillTo, replaceAt, dropAt };
 }
 
 /**
@@ -205,7 +227,7 @@ type Tile = { key: string; id: string; title: string; src: string };
 
 /** Every photo of every theme, ordered so neither a theme nor a domain clusters; no photo twice. */
 function buildTiles(): Tile[] {
-  const themes = VIBES.filter((v) => IMAGES[v.id]?.length);
+  const themes = VIBES.filter((v) => IMAGES[v.id]?.length && !v.id.startsWith("h-")); // hobbies have their own chapter
   const buckets = new Map<string, typeof themes>();
   for (const v of themes) buckets.set(v.domain, [...(buckets.get(v.domain) ?? []), v]);
   const lists = [...buckets.values()].sort((a, b) => b.length - a.length);
@@ -488,9 +510,17 @@ function CuratedFeed({ onNext, domains, goal = FEED_TARGET, step = 1, nextLabel 
   );
   const { take, buffered, exhausted, loading, ticks } = src;
 
-  const nextCard = useCallback(() => take(1)[0], [take]);
+  const likedIds = useRef(new Set<string>());
+  const nextCard = useCallback(() => {
+    for (let i = 0; i < 40; i++) {
+      const c = take(1)[0];
+      if (!c) return undefined;
+      if (!likedIds.current.has(c.id)) return c;
+    }
+    return undefined;
+  }, [take]);
   const cardKey = useCallback((c: TasteCard) => c.id, []);
-  const { slots: cards, leaving, fillTo, replaceAt } = useSlots<TasteCard>(nextCard, cardKey);
+  const { slots: cards, leaving, fillTo, replaceAt, dropAt } = useSlots<TasteCard>(nextCard, cardKey);
   const lenRef = useRef(0);
   useEffect(() => {
     lenRef.current = cards.length;
@@ -506,6 +536,7 @@ function CuratedFeed({ onNext, domains, goal = FEED_TARGET, step = 1, nextLabel 
 
   const like = useCallback(
     (card: TasteCard) => {
+      likedIds.current.add(card.id);
       replaceAt(card.id); // only this card leaves; a new one takes its place
       setLikes((n) => n + 1);
       postLikes([card.id], [card]).then((p) => p && setProgress((prev) => mergeProgress(prev, p)));
@@ -554,7 +585,7 @@ function CuratedFeed({ onNext, domains, goal = FEED_TARGET, step = 1, nextLabel 
         )}
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5 sm:gap-3">
           {cards.map((card) => (
-            <FeedCard key={card.id} card={card} pool={src.pools.current[card.id]} onLike={like} leaving={leaving.has(card.id)} />
+            <FeedCard key={card.id} card={card} pool={src.pools.current[card.id]} onLike={like} leaving={leaving.has(card.id)} onBroken={dropAt} />
           ))}
         </div>
         <div ref={sentinel} className="h-20 flex items-center justify-center">
@@ -578,7 +609,7 @@ function CuratedFeed({ onNext, domains, goal = FEED_TARGET, step = 1, nextLabel 
   );
 }
 
-const FeedCard = memo(function FeedCard({ card, pool, onLike, leaving }: { card: TasteCard; pool?: ExplorationPool; onLike: (c: TasteCard) => void; leaving: boolean }) {
+const FeedCard = memo(function FeedCard({ card, pool, onLike, leaving, onBroken }: { card: TasteCard; pool?: ExplorationPool; onLike: (c: TasteCard) => void; leaving: boolean; onBroken: (id: string) => void }) {
   const color = domainColor(card.domain);
   return (
     <button
@@ -590,7 +621,7 @@ const FeedCard = memo(function FeedCard({ card, pool, onLike, leaving }: { card:
     >
       {/* preloaded before this card was added, so no pop-in */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={cardImageSrc(card)!} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
+      <img src={cardImageSrc(card)!} alt="" referrerPolicy="no-referrer" onError={() => onBroken(card.id)} className="absolute inset-0 w-full h-full object-cover" />
       <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/5 to-transparent" />
       <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
         <span className="text-[9px] uppercase tracking-[0.18em] rounded-full px-2 py-0.5 backdrop-blur-sm" style={{ background: `${color}33`, color }}>
@@ -606,44 +637,36 @@ const FeedCard = memo(function FeedCard({ card, pool, onLike, leaving }: { card:
   );
 });
 
-/* ====================== PHASE 3 — a story in four chapters ====================== */
+/* ====================== PHASE 3 — a story in three chapters ====================== */
 
-type Duel = [string, string]; // two opposed vibe themes
+type Option = { id: string; label: string }; // a real, Qloo-photographed example that stands for an ideal
+type Quad = [Option, Option, Option, Option];
 
-const DUELS_PLACES: Duel[] = [
-  ["v-tropical", "v-alps"],
-  ["v-skyline", "v-garden"],
-  ["v-snow", "v-desert"],
-  ["v-forest", "v-neon-city"],
-  ["v-lake", "v-sailboat"],
-  ["v-fireplace", "v-glasshouse"],
-  ["v-bazaar", "v-retrofuture"],
-  ["v-padthai", "v-oysters"],
-  ["v-coffee", "v-wine"],
-  ["v-train", "v-balloons"],
+const QUADS_INSTINCTS: Quad[] = [
+  [{ id: "rothko-chapel", label: "Quiet & meditative" }, { id: "mad-max-fury", label: "Fast & kinetic" }, { id: "spirited-away", label: "Dreamy & handmade" }, { id: "blade-runner-2049", label: "Neon & futuristic" }],
+  [{ id: "church-of-light", label: "Minimal & still" }, { id: "grand-budapest", label: "Ornate & playful" }, { id: "call-me-by-your-name", label: "Warm & romantic" }, { id: "succession", label: "Cold & sharp" }],
+  [{ id: "kaiseki", label: "Slow ritual" }, { id: "sichuan-hotpot", label: "Fiery & communal" }, { id: "neapolitan-pizza", label: "Rustic & simple" }, { id: "izakaya", label: "Lively & late-night" }],
+  [{ id: "norwegian-wood", label: "Literary & quiet" }, { id: "infinite-jest", label: "Wild & maximal" }, { id: "kafka-on-the-shore", label: "Surreal & dreamy" }, { id: "one-hundred-years", label: "Epic & generational" }],
+  [{ id: "van-gogh-museum", label: "Painterly & emotional" }, { id: "teamlab", label: "Digital & immersive" }, { id: "moma", label: "Canonical & clean" }, { id: "gesamtkunstwerk-bauhaus", label: "Bold & functional" }],
+  [{ id: "twin-peaks", label: "Dreamy & eerie" }, { id: "chernobyl", label: "Bleak & real" }, { id: "fleabag", label: "Witty & raw" }, { id: "mr-robot", label: "Dark & technical" }],
 ];
-const DUELS_STYLE: Duel[] = [
-  ["v-pop-art", "v-monochrome"],
-  ["v-ornate", "v-concrete"],
-  ["v-vinyl", "v-synth"],
-  ["v-ceramics", "v-audio"],
-  ["v-textile", "v-loft"],
-  ["v-classic-car", "v-scifi"],
-  ["v-pastel", "v-city-rain"],
-  ["v-greenhouse", "v-bauhaus"],
-  ["v-stained", "v-graffiti"],
-  ["v-lego", "v-library"],
+const QUADS_STYLE: Quad[] = [
+  [{ id: "villa-savoye", label: "Modernist & rational" }, { id: "nakagin-capsule", label: "Retro-futurist" }, { id: "sydney-opera", label: "Sculptural & iconic" }, { id: "farnsworth-house", label: "Glass & transparent" }],
+  [{ id: "a24", label: "Indie & curated" }, { id: "muji", label: "Honest & everyday" }, { id: "aesop", label: "Sensory & quiet" }, { id: "bang-olufsen", label: "Crafted & elegant" }],
+  [{ id: "sonos", label: "Calm tech" }, { id: "herman-miller", label: "Iconic design" }, { id: "patagonia", label: "Outdoor & ethical" }, { id: "sauna-culture", label: "Heat & ritual" }],
+  [{ id: "turkish-breakfast", label: "Cozy & social" }, { id: "dim-sum", label: "Playful & shared" }, { id: "japanese-ramen", label: "Humble & steamy" }, { id: "south-indian-dosa", label: "Crisp & spiced" }],
+  [{ id: "the-bell-jar", label: "Confessional & sharp" }, { id: "remains-of-the-day", label: "Restrained & elegant" }, { id: "master-margarita", label: "Satirical & surreal" }, { id: "invisible-cities", label: "Poetic & labyrinthine" }],
 ];
 
 type Chapter =
+  | { kind: "hobbies"; title: string; line: string; blurb: string }
   | { kind: "feed"; title: string; line: string; blurb: string; domains: string[] }
-  | { kind: "duel"; title: string; line: string; blurb: string; pairs: Duel[] };
+  | { kind: "duel"; title: string; line: string; blurb: string; quads: Quad[] };
 
 const CHAPTERS: Chapter[] = [
-  { kind: "feed", title: "Screen & page", line: "What you watch, read and play", blurb: "Films, series, books and games — tap the ones you'd happily lose a weekend to.", domains: ["film", "tv", "book", "game"] },
-  { kind: "duel", title: "Your instincts", line: "Where you'd rather be", blurb: "Two options, one gut call. Whichever pulls you wins.", pairs: DUELS_PLACES },
-  { kind: "feed", title: "Spaces & art", line: "What you'd surround yourself with", blurb: "Buildings and art — tap what you'd want to stand in front of.", domains: ["architecture", "art"] },
-  { kind: "duel", title: "Your style", line: "How it all looks and feels", blurb: "Last round. Which side is more you?", pairs: DUELS_STYLE },
+  { kind: "duel", title: "Your instincts", line: "Which one pulls you?", blurb: "Four moods, one gut call. Pick the one that feels most like you.", quads: QUADS_INSTINCTS },
+  { kind: "hobbies", title: "Sports & hobbies", line: "What do you actually do?", blurb: "Tap everything you play, practise or love doing — as many as you like." },
+  { kind: "duel", title: "Your style", line: "How it all looks and feels", blurb: "Last round. Which of these four is most you?", quads: QUADS_STYLE },
 ];
 
 function Chapters({ onProfile }: { onProfile: () => void }) {
@@ -666,28 +689,28 @@ function Chapters({ onProfile }: { onProfile: () => void }) {
   };
   const nextLabel = last ? "See my Taste DNA →" : `Next: ${CHAPTERS[i + 1].title} →`;
   const heading = `Chapter ${i + 1} of ${CHAPTERS.length} · ${ch.title}`;
-  if (ch.kind === "duel") return <DuelRound key={i} pairs={ch.pairs} heading={heading} line={ch.line} blurb={ch.blurb} onDone={advance} />;
+  if (ch.kind === "hobbies") return <HobbyPicker key={i} heading={heading} line={ch.line} blurb={ch.blurb} nextLabel={nextLabel} onDone={advance} />;
+  if (ch.kind === "duel") return <QuadRound key={i} quads={ch.quads} heading={heading} line={ch.line} blurb={ch.blurb} onDone={advance} />;
   return <CuratedFeed key={i} step={2} domains={ch.domains} goal={10} heading={heading} blurb={ch.blurb} nextLabel={nextLabel} onNext={advance} />;
 }
 
-/** "This or that": two opposed photos, one tap. Positive-only — the chosen side counts double, the other is simply not chosen. */
-function DuelRound({ pairs, heading, line, blurb, onDone }: { pairs: Duel[]; heading: string; line: string; blurb: string; onDone: () => void }) {
-  const usable = useMemo(() => pairs.filter(([a, b]) => IMAGES[a]?.length && IMAGES[b]?.length), [pairs]);
+const optionImage = (id: string) => (cardImages as Record<string, string>)[id];
+
+/** Four-way "which pulls you?": each option is a real example with a Qloo photo; the chosen one counts double. */
+function QuadRound({ quads, heading, line, blurb, onDone }: { quads: Quad[]; heading: string; line: string; blurb: string; onDone: () => void }) {
+  const usable = useMemo(() => quads.map((q) => q.filter((o) => optionImage(o.id))).filter((q) => q.length >= 3), [quads]);
   const [idx, setIdx] = useState(0);
   const [chosen, setChosen] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const label = (id: string) => VIBES.find((v) => v.id === id)?.title ?? id;
-  const photo = (id: string, n: number) => IMAGES[id][Math.min(n, IMAGES[id].length - 1)];
 
-  // preload this pair (and the next) before showing anything
+  // preload this round (and the next) before showing anything
   useEffect(() => {
     let live = true;
-    const pair = usable[idx];
-    if (!pair) return;
+    const quad = usable[idx];
+    if (!quad) return;
     setReady(false);
-    Promise.all(pair.map((id) => preload(photo(id, 1)))).then(() => live && setReady(true));
-    const nx = usable[idx + 1];
-    if (nx) nx.forEach((id) => preload(photo(id, 1)));
+    Promise.all(quad.map((o) => preload(optionImage(o.id)))).then(() => live && setReady(true));
+    usable[idx + 1]?.forEach((o) => preload(optionImage(o.id)));
     return () => {
       live = false;
     };
@@ -704,39 +727,120 @@ function DuelRound({ pairs, heading, line, blurb, onDone }: { pairs: Duel[]; hea
     }, 420);
   };
 
-  const pair = usable[idx];
-  if (!pair) return <LoadingScreen label="Setting up…" />;
+  const quad = usable[idx];
+  if (!quad) return <LoadingScreen label="Setting up…" />;
 
   return (
     <main className="flex-1 flex flex-col px-3 sm:px-8 pt-4 pb-10 max-w-3xl mx-auto w-full">
       <Steps current={2} />
       <p className="text-xs dim mt-3">{heading}</p>
       <h1 className="font-display text-2xl sm:text-3xl mt-1">{line}</h1>
-      <p className="dim text-sm mt-1 mb-5">{blurb}</p>
-      <div className={`grid grid-cols-2 gap-3 transition-opacity duration-200 ${ready ? "opacity-100" : "opacity-0"}`}>
-        {pair.map((id) => (
+      <p className="dim text-sm mt-1 mb-4">{blurb}</p>
+      <div className={`grid grid-cols-2 gap-2.5 sm:gap-3 transition-opacity duration-200 ${ready ? "opacity-100" : "opacity-0"}`}>
+        {quad.map((o) => (
           <button
-            key={`${idx}-${id}`}
+            key={`${idx}-${o.id}`}
             type="button"
-            onClick={() => choose(id)}
-            aria-label={label(id)}
-            className={`relative aspect-[3/4] rounded-2xl overflow-hidden border hairline transition duration-300 ${chosen ? (chosen === id ? "scale-[1.03]" : "opacity-20 scale-95") : "active:scale-95"}`}
+            onClick={() => choose(o.id)}
+            aria-label={o.label}
+            className={`relative aspect-[4/5] rounded-2xl overflow-hidden border hairline transition duration-300 ${chosen ? (chosen === o.id ? "scale-[1.03]" : "opacity-20 scale-95") : "active:scale-95"}`}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={photo(id, 1)} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
-            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent p-3 pt-10">
-              <p className="font-display text-base sm:text-lg leading-tight">{label(id)}</p>
+            <img src={optionImage(o.id)} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
+            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 to-transparent p-3 pt-12">
+              <p className="font-display text-base sm:text-lg leading-tight">{o.label}</p>
+              <p className="text-[10px] dim mt-0.5 truncate">{cardsById().get(o.id)?.title}</p>
             </div>
           </button>
         ))}
       </div>
-      <div className="mt-6 flex items-center justify-between">
+      <div className="mt-5 flex items-center justify-between">
         <div className="flex-1 h-1 rounded-full bg-[var(--hairline)] overflow-hidden mr-4">
           <div className="h-full bg-[var(--like)] transition-all duration-300" style={{ width: `${(idx / usable.length) * 100}%` }} />
         </div>
         <span className="text-xs dim whitespace-nowrap">
           {idx + 1} / {usable.length}
         </span>
+      </div>
+    </main>
+  );
+}
+
+/* ---- sports & hobbies: tap everything that's you ---- */
+
+// photos that came out off-theme or show faces are left out
+const HOBBY_SKIP = new Set(["h-climb", "h-skate", "h-boardgames", "h-guitar", "h-yoga"]);
+const HOBBIES = VIBES.filter((v) => v.id.startsWith("h-") && !HOBBY_SKIP.has(v.id) && IMAGES[v.id]?.length);
+
+function HobbyPicker({ heading, line, blurb, nextLabel, onDone }: { heading: string; line: string; blurb: string; nextLabel: string; onDone: () => void }) {
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [ready, setReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const photo = (id: string) => IMAGES[id][0];
+
+  useEffect(() => {
+    let live = true;
+    Promise.race([Promise.all(HOBBIES.map((h) => preload(photo(h.id)))), new Promise((r) => setTimeout(r, 3500))]).then(() => live && setReady(true));
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const toggle = (id: string) =>
+    setSel((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
+  const finish = async () => {
+    if (busy) return;
+    setBusy(true);
+    if (sel.size) await postLikes([...sel, ...sel]); // a hobby you chose counts double
+    onDone();
+  };
+
+  if (!ready) return <LoadingScreen label="Setting up…" />;
+
+  return (
+    <main className="flex-1 flex flex-col">
+      <div className="px-3 sm:px-8 pt-4 pb-3 max-w-5xl mx-auto w-full">
+        <Steps current={2} />
+        <p className="text-xs dim mt-3">{heading}</p>
+        <h1 className="font-display text-2xl sm:text-3xl mt-1">{line}</h1>
+        <p className="dim text-sm mt-1">{blurb}</p>
+      </div>
+      <div className="px-3 sm:px-8 pb-32 max-w-5xl mx-auto w-full">
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 sm:gap-3">
+          {HOBBIES.map((h) => {
+            const on = sel.has(h.id);
+            return (
+              <button
+                key={h.id}
+                type="button"
+                onClick={() => toggle(h.id)}
+                aria-pressed={on}
+                aria-label={h.title}
+                className={`relative aspect-square rounded-xl overflow-hidden transition duration-200 ${on ? "ring-2 ring-[var(--like)] scale-[0.97]" : "active:scale-95"}`}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={photo(h.id)} alt="" referrerPolicy="no-referrer" className={`absolute inset-0 w-full h-full object-cover transition ${on ? "" : "opacity-90"}`} />
+                <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent p-2 pt-8">
+                  <p className="font-display text-sm leading-tight">{h.title}</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className="fixed bottom-0 inset-x-0 z-30 border-t hairline bg-[var(--bg)]/92 backdrop-blur-md px-4 sm:px-8 py-3">
+        <div className="max-w-3xl mx-auto flex items-center justify-between gap-4">
+          <span className="text-xs dim">{sel.size === 0 ? "Pick any that are you" : `${sel.size} picked`}</span>
+          <button onClick={finish} disabled={busy} className="btn-primary text-sm whitespace-nowrap">
+            {busy ? "Saving…" : nextLabel}
+          </button>
+        </div>
       </div>
     </main>
   );
