@@ -1,5 +1,5 @@
 import type { TasteCard } from "@/lib/types";
-import { VIBES } from "@/data/vibes";
+import { VIBES } from "./vibes";
 
 /**
  * Curated seed corpus: ~176 culturally real entities across 12 domains.

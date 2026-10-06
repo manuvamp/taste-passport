@@ -34,10 +34,7 @@ const ROWS: Row[] = [
   ["v-coffee", "Specialty coffee", "☕", 25, "lifestyle", ["brewing", "precision", "origin", "ritual", "craft"], "Pour-over coffee"],
   ["v-tea", "Tea ceremony", "🍵", 110, "lifestyle", ["japanese", "ritual", "quiet", "seasonal", "zen"], "Matcha"],
   ["v-wine", "Natural wine", "🍷", 345, "food", ["wine", "fermented", "funky", "counterculture", "artisan"], "Red wine glass"],
-  ["v-cocktail", "Cocktail bar", "🍸", 280, "food", ["night", "sophisticated", "craft", "smooth"], "Cocktail"],
   ["v-icecream", "Gelato", "🍨", 330, "food", ["italian-food", "playful", "summer", "sweet-spicy"], "Gelato"],
-  ["v-seafood", "Seafood on ice", "🦪", 195, "food", ["coastal", "raw", "bright", "elegant"], "Oyster"],
-  ["v-farmers", "Farmers market", "🥬", 100, "food", ["seasonal", "earth", "artisan", "foraged"], "Farmers' market"],
   ["v-bbqfire", "Cooking over fire", "🔥", 15, "food", ["smoke", "grill", "rustic", "communal"], "Barbecue grill"],
 
   // ---- places ----
@@ -58,12 +55,9 @@ const ROWS: Row[] = [
   ["v-volcano", "Black sand & volcanoes", "🌋", 5, "travel", ["volcanic", "remote", "austere", "nordic", "dramatic"], "Iceland"],
   ["v-forest", "Misty forest", "🌲", 140, "lifestyle", ["forest", "slow", "sensory", "calm"], "Shinrin-yoku"],
   ["v-lake", "Still lake at dawn", "🛶", 205, "travel", ["calm", "quiet", "water", "minimal"], "Lake Como"],
-  ["v-roadtrip", "Open road", "🛣️", 25, "travel", ["american", "retro", "freedom", "epic"], "Route 66"],
   ["v-skyline", "Glass skyline", "🏙️", 225, "travel", ["urban", "tech", "dense", "layered"], "Hong Kong skyline"],
   ["v-onsen", "Hot spring steam", "♨️", 20, "lifestyle", ["japanese", "hot-spring", "steam", "ritual", "mountain"], "Onsen"],
   ["v-sauna", "Wood sauna", "🧖", 28, "lifestyle", ["nordic", "heat", "ritual", "quiet", "wood"], "Sauna"],
-  ["v-camping", "Campfire & tents", "⛺", 25, "lifestyle", ["outdoor", "functional", "community", "earthy"], "Camping"],
-  ["v-surf", "Surf break", "🏄", 190, "lifestyle", ["movement", "coastal", "physical", "freedom"], "Surfing"],
 
   // ---- spaces & architecture ----
   ["v-concrete", "Raw concrete & light", "🏛️", 210, "architecture", ["concrete", "minimal", "light", "quiet", "brutalist"], "Church of the Light"],
@@ -104,14 +98,10 @@ const ROWS: Row[] = [
   ["v-glitch", "Digital glitch", "👾", 150, "art", ["digital", "futuristic", "experimental", "machine"], "Glitch art"],
 
   // ---- fashion & objects (no people) ----
-  ["v-tailored", "Quiet tailoring", "🧥", 30, "fashion", ["minimal", "tailored", "quiet-luxury", "restrained"], "Trench coat"],
-  ["v-sneakers", "Sneaker wall", "👟", 350, "fashion", ["streetwear", "hype", "playful", "street"], "Sneakers"],
   ["v-denim", "Worn denim & workwear", "👖", 215, "fashion", ["workwear", "utilitarian", "durable", "american"], "Selvedge denim"],
   ["v-black-drape", "All-black draping", "🖤", 270, "fashion", ["black", "draped", "avant-garde", "dark"], "Black dress fabric"],
   ["v-outdoor-gear", "Technical outdoor gear", "🎒", 140, "fashion", ["outdoor", "technical", "functional", "gorp"], "Backpack"],
   ["v-leather", "Leather goods", "👜", 25, "fashion", ["craft", "leather", "artisan", "classic"], "Leather handbag"],
-  ["v-punk", "Tartan & safety pins", "🧷", 355, "fashion", ["punk", "rebellious", "british", "tartan"], "Punk fashion"],
-  ["v-jewelry", "Chunky jewellery", "💍", 45, "fashion", ["maximal", "ornate", "sculptural", "bold"], "Jewellery"],
   ["v-audio", "Hi-fi audio gear", "🔊", 215, "brand", ["audio", "craft", "elegant", "minimal"], "Hi-fi"],
   ["v-synth", "Synths & knobs", "🎛️", 20, "brand", ["synth", "playful", "industrial-design", "electronic"], "Synthesizer"],
   ["v-design-chair", "Design-classic chair", "🪑", 30, "brand", ["iconic", "modernist", "design", "ergonomic"], "Eames Lounge Chair"],
@@ -120,18 +110,9 @@ const ROWS: Row[] = [
   ["v-keyboard", "Mechanical keyboard", "🖥️", 215, "brand", ["tech", "precision", "craft", "playful"], "Computer keyboard"],
 
   // ---- scenes, moods & lifestyle ----
-  ["v-night-rave", "Strobe-lit dance floor", "🪩", 290, "lifestyle", ["electronic", "night", "communal", "strobe", "freedom"], "Nightclub"],
-  ["v-jazz-bar", "Smoky jazz club", "🎷", 35, "music", ["jazz", "noir", "night", "cool", "improvisation"], "Jazz club"],
-  ["v-festival", "Summer festival crowd", "🎪", 15, "music", ["communal", "vibrant", "danceable", "summer"], "Music festival"],
   ["v-piano", "Quiet piano room", "🎹", 215, "music", ["piano", "quiet", "minimal", "intimate", "neoclassical"], "Grand piano"],
   ["v-guitars", "Loud guitar amps", "🎸", 5, "music", ["guitar", "raw", "attitude", "indie-rock"], "Electric guitar"],
-  ["v-orchestra", "Concert hall", "🎻", 38, "music", ["classic", "elegant", "cerebral", "timeless"], "Concert hall"],
-  ["v-skate", "Skate park", "🛹", 215, "lifestyle", ["street", "urban", "youth", "concrete"], "Skateboarding"],
-  ["v-climb", "Climbing wall", "🧗", 12, "lifestyle", ["movement", "problem-solving", "physical", "community"], "Rock climbing"],
-  ["v-yoga", "Morning stretch", "🧘", 280, "lifestyle", ["zen", "silence", "daily-practice", "calm"], "Yoga"],
-  ["v-cycling", "Early morning ride", "🚴", 150, "lifestyle", ["urban", "self-powered", "endurance", "speed"], "Road bicycle"],
   ["v-garden", "Wild cottage garden", "🌸", 335, "lifestyle", ["seasonal", "organic", "warm", "handmade"], "Cottage garden"],
-  ["v-picnic", "Sunday picnic", "🧺", 60, "lifestyle", ["social", "summer", "warm", "slow"], "Picnic"],
   ["v-fireplace", "Fireplace & blankets", "🕯️", 25, "lifestyle", ["cozy", "warm", "domestic", "slow"], "Fireplace"],
   ["v-rain-window", "Rain on the window", "☔", 215, "lifestyle", ["rainy", "quiet", "melancholic", "slow"], "Rain"],
   ["v-sunset", "Golden-hour glow", "🌅", 30, "lifestyle", ["warm", "nostalgic", "romantic", "summer"], "Golden hour"],
@@ -145,7 +126,6 @@ const ROWS: Row[] = [
   ["v-space", "Starfield & nebula", "🌌", 265, "game", ["space", "wonder", "curiosity", "epic"], "Nebula"],
   ["v-bookstore", "Cluttered bookshop", "📖", 28, "book", ["literary", "warm", "quiet", "nostalgic"], "Bookstore"],
   ["v-poetry", "Handwritten notebook", "📝", 40, "book", ["poetic", "intimate", "quiet", "melancholic"], "Notebook"],
-  ["v-comic", "Graphic novel panels", "💥", 355, "book", ["playful", "kinetic", "maximal", "pop"], "Comics"],
 ];
 
 export type Vibe = TasteCard & { emoji: string; hue: number; imageQuery?: string };
