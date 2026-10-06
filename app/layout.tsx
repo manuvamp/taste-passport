@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { Nav } from "@/components/nav";
+import { getQlooAdapter } from "@/lib/qloo";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -16,6 +18,12 @@ export const metadata: Metadata = {
   title: "Taste Passport — Teach AI what you love",
   description:
     "A visual, adaptive taste-learning system. React to images, build your cultural fingerprint with the Qloo taste graph, and hand it to any AI agent.",
+  openGraph: {
+    title: "Taste Passport — Teach AI what you love",
+    description:
+      "React to images, build a portable cultural fingerprint with the Qloo taste graph, and hand it to any AI agent.",
+    images: [{ url: "/api/og", width: 1200, height: 630 }],
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -24,7 +32,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="grain min-h-full flex flex-col">{children}</body>
+      <body className="grain min-h-full flex flex-col">
+        <Nav mode={getQlooAdapter().mode} />
+        {children}
+      </body>
     </html>
   );
 }

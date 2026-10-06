@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Nav } from "@/components/nav";
 
 type Stats = {
   mode: string;
@@ -45,7 +44,6 @@ export default function DevPage() {
   if (!stats) {
     return (
       <main className="flex-1">
-        <Nav mode="…" />
         <p className="dim animate-pulse p-8">loading stats…</p>
       </main>
     );
@@ -53,7 +51,6 @@ export default function DevPage() {
 
   return (
     <main className="flex-1">
-      <Nav mode={stats.mode} />
       <div className="px-5 sm:px-8 py-8 max-w-5xl mx-auto grid sm:grid-cols-2 gap-6 text-sm">
         <Panel title="Current taste state">
           <Row k="session" v={stats.currentSession.id.slice(0, 8)} />
