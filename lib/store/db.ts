@@ -189,11 +189,11 @@ export async function getOrCreateSession(id?: string): Promise<SessionRecord> {
 
 // ---- mutation helpers: mutate `rec` then persist it ------------------
 
-export async function markShown(rec: SessionRecord, cardIds: string[]): Promise<void> {
+export async function markShown(rec: SessionRecord, cardIds: string[], roundBump = 1): Promise<void> {
   const set = new Set(rec.state.shownCardIds);
   for (const c of cardIds) set.add(c);
   rec.state.shownCardIds = [...set];
-  rec.currentRound += 1;
+  rec.currentRound += roundBump;
   await putSession(rec);
 }
 

@@ -61,11 +61,13 @@ export default function Discover() {
   const [mode, setMode] = useState("mock");
   const [view, setView] = useState<View>("grid");
   const [galleryDone, setGalleryDone] = useState(false);
+  const [galleryWall, setGalleryWall] = useState(0); // walls the user went through (client-side)
   const [galleryLiked, setGalleryLiked] = useState<string[]>([]);
   const [firstPick, setFirstPick] = useState<TasteCard | null>(null);
   const [loading, setLoading] = useState(true);
   const [exhausted, setExhausted] = useState(false);
   const fetching = useRef(false);
+  const wall = useRef(0); // gallery epoch: increments on "Next wall" so stale fetches are discarded
   const gridTop = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -80,7 +82,9 @@ export default function Discover() {
   };
 
   const round = progress?.round ?? 0;
-  const phase: Phase = galleryDone || round >= GALLERY_ROUNDS ? view : "gallery";
+  // gallery progression is client-side (walls seen), not server rounds —
+  // feed fetches fire in bursts and would otherwise skip walls
+  const phase: Phase = galleryDone || galleryWall >= GALLERY_ROUNDS ? view : "gallery";
 
   const finishGallery = useCallback(() => {
     setGalleryDone(true);
@@ -91,10 +95,12 @@ export default function Discover() {
     async (count = 12) => {
       if (fetching.current) return;
       fetching.current = true;
+      const epoch = wall.current;
       try {
         await fetch("/api/session", { method: "POST" });
         const res = await fetch(`/api/feed?count=${count}`);
         const data = (await res.json()) as FeedResponse;
+        if (epoch !== wall.current) return; // user moved to the next wall mid-flight — discard
         setQueue((prev) => {
           const seen = new Set(prev.map((c) => c.id));
           const next = data.cards.filter((c) => !seen.has(c.id));
@@ -201,7 +207,7 @@ export default function Discover() {
           <div className="flex justify-between text-xs dim mb-1.5">
             <span>
               {phase === "gallery"
-                ? `${galleryLiked.length} picked · warm-up ${Math.min(round + 1, GALLERY_ROUNDS)}/${GALLERY_ROUNDS}`
+                ? `${galleryLiked.length} picked · warm-up ${Math.min(galleryWall + 1, GALLERY_ROUNDS)}/${GALLERY_ROUNDS}`
                 : `${decisive} decisive picks · ${progress?.confidenceLabel ?? "…"}`}
             </span>
             <span>{Math.round((progress?.confidence ?? 0) * 100)}% confidence</span>
@@ -272,9 +278,11 @@ export default function Discover() {
           <div className="fixed bottom-6 inset-x-0 flex justify-center z-20 px-5">
             <button
               onClick={() => {
+                wall.current += 1; // invalidates any in-flight fetch for the old wall
                 setQueue([]);
                 setGalleryLiked([]);
-                if (round + 1 >= GALLERY_ROUNDS) {
+                setGalleryWall((w) => w + 1);
+                if (galleryWall + 1 >= GALLERY_ROUNDS) {
                   finishGallery();
                   loadFeed(12);
                 } else {
@@ -284,7 +292,7 @@ export default function Discover() {
               className="btn-primary text-sm shadow-2xl flex items-center gap-3"
               style={{ boxShadow: "0 12px 40px rgba(0,0,0,0.5)" }}
             >
-              {round + 1 >= GALLERY_ROUNDS ? "Start the real thing" : "Next wall"}
+              {galleryWall + 1 >= GALLERY_ROUNDS ? "Start the real thing" : "Next wall"}
               <span className="opacity-60">→</span>
               {galleryLiked.length > 0 && (
                 <span className="bg-[var(--bg)] text-[var(--ink)] rounded-full text-xs px-2 py-0.5">
@@ -422,7 +430,7 @@ function GalleryTile({ card, index, liked, onTap }: { card: TasteCard; index: nu
       className="relative mb-3 w-full break-inside-avoid rounded-2xl overflow-hidden cursor-pointer text-left group"
       style={{ aspectRatio: aspectFor(card.id) }}
       aria-pressed={liked}
-      aria-label={`Pick ${card.title}`}
+      aria-label={`Pick tile ${index + 1}`}
     >
       <div className="absolute inset-0">
         <CardImage card={card} width={420} eager={index < 8} alt="" />

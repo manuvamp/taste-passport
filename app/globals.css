@@ -17,6 +17,11 @@ html {
   color-scheme: dark;
 }
 
+html,
+body {
+  overflow-x: clip;
+}
+
 body {
   background: var(--bg);
   color: var(--ink);
