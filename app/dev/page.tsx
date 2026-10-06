@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 
 type Stats = {
   mode: string;
+  store: "kv" | "file";
   weights: Record<string, number>;
-  totals: { sessions: number; interactions: number; profiles: number };
+  totals: { sessions: number; interactions: number; profiles: number } | null;
   currentSession: {
     id: string;
     interactions: number;
@@ -93,9 +94,33 @@ export default function DevPage() {
         </Panel>
 
         <Panel title="Platform totals">
-          <Row k="sessions" v={String(stats.totals.sessions)} />
-          <Row k="interactions" v={String(stats.totals.interactions)} />
-          <Row k="profile versions" v={String(stats.totals.profiles)} />
+          <Row k="store" v={stats.store === "kv" ? "Vercel KV / Upstash" : "local JSON file"} />
+          {stats.totals ? (
+            <>
+              <Row k="sessions" v={String(stats.totals.sessions)} />
+              <Row k="interactions" v={String(stats.totals.interactions)} />
+              <Row k="profile versions" v={String(stats.totals.profiles)} />
+            </>
+          ) : (
+            <p className="dim text-xs">platform-wide totals unavailable on the shared KV store</p>
+          )}
+        </Panel>
+
+        <Panel title="Connect your agent" className="sm:col-span-2">
+          <p className="dim text-xs mb-3">
+            Any MCP-capable agent can consume this profile. Session id:{" "}
+            <code className="text-[var(--ink)]">{stats.currentSession.id}</code>
+          </p>
+          <div className="space-y-2 text-xs">
+            <p className="dim">Hosted HTTP endpoint (share with judges):</p>
+            <code className="block break-all bg-[var(--bg-soft)] border hairline rounded-lg px-3 py-2">
+              {typeof window !== "undefined" ? window.location.origin : ""}/api/mcp?sid={stats.currentSession.id}
+            </code>
+            <p className="dim pt-1">Or the stdio server:</p>
+            <code className="block break-all bg-[var(--bg-soft)] border hairline rounded-lg px-3 py-2">
+              TASTE_PASSPORT_URL={typeof window !== "undefined" ? window.location.origin : ""} TASTE_SESSION_ID={stats.currentSession.id} node mcp/server.mjs
+            </code>
+          </div>
         </Panel>
 
         <Panel title="Recent Qloo calls" className="sm:col-span-2">

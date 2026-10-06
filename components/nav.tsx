@@ -19,6 +19,9 @@ export function Nav({ mode }: { mode?: string }) {
         <Link href="/demo" className="hover:text-[var(--ink)] transition-colors hidden sm:inline">
           Demo
         </Link>
+        <Link href="/eval" className="hover:text-[var(--ink)] transition-colors hidden sm:inline" title="Run the generic-vs-taste evaluation">
+          Eval
+        </Link>
         <Link href="/dev" className="hover:text-[var(--ink)] transition-colors opacity-50 hover:opacity-100 hidden sm:inline" title="Developer dashboard">
           ⚙
         </Link>
