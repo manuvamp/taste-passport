@@ -2,11 +2,11 @@ import Link from "next/link";
 
 export function Nav({ mode }: { mode?: string }) {
   return (
-    <nav className="flex items-center justify-between px-5 sm:px-8 py-4 border-b hairline sticky top-0 z-40 bg-[var(--bg)]/85 backdrop-blur-sm">
+    <nav className="flex items-center justify-between px-4 sm:px-8 py-4 border-b hairline sticky top-0 z-40 bg-[var(--bg)]/85 backdrop-blur-sm">
       <Link href="/" className="font-display text-lg tracking-tight shrink-0">
         Taste Passport
       </Link>
-      <div className="flex items-center gap-4 sm:gap-6 text-sm dim">
+      <div className="flex items-center gap-3 sm:gap-6 text-xs sm:text-sm dim whitespace-nowrap">
         <Link href="/discover" className="hover:text-[var(--ink)] transition-colors">
           Discover
         </Link>

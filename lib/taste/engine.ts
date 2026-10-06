@@ -220,6 +220,13 @@ export async function nextBatch(session: {
 }, count = 12): Promise<{ cards: TasteCard[]; adapted: boolean; pools: Record<string, ExplorationPool> }> {
   const state = session.state;
   const seen = new Set(state.shownCardIds);
+  // a live Qloo card and its seed twin are the same thing to the user — treat both as seen
+  const seenTitles = new Set<string>();
+  for (const id of state.shownCardIds) {
+    const t = cardsById().get(id)?.title ?? getLiveCard(id)?.title;
+    if (t) seenTitles.add(t.toLowerCase());
+  }
+  for (const c of SEED_CARDS) if (seenTitles.has(c.title.toLowerCase())) seen.add(c.id);
 
   if (state.signals.length === 0) {
     // never repeat a card already shown — clicking "next" on the gallery must
@@ -343,9 +350,14 @@ export async function nextBatch(session: {
 
   // append live Qloo entities (deduped against picked seed titles)
   const pickedTitles = new Set(picked.map((c) => c.title.toLowerCase()));
+  // never re-serve what the user already saw (by id, or by title for seed/live twins)
+  for (const id of seen) {
+    const t = cardsById().get(id)?.title ?? getLiveCard(id)?.title;
+    if (t) pickedTitles.add(t.toLowerCase());
+  }
   for (const lc of liveCards) {
     if (picked.length >= count) break;
-    if (pickedTitles.has(lc.title.toLowerCase())) continue;
+    if (seen.has(lc.id) || pickedTitles.has(lc.title.toLowerCase())) continue;
     pickedTitles.add(lc.title.toLowerCase());
     picked.push(lc);
     pools[lc.id] = likedDomains.has(lc.domain) ? "exploit" : "adjacent";

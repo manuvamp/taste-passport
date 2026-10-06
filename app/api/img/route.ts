@@ -130,20 +130,10 @@ export async function GET(req: Request) {
   }
   if (src === "") return NextResponse.json({ error: "image unavailable" }, { status: 404 });
 
-  try {
-    const img = await fetch(src, {
-      headers: { "user-agent": "TastePassport/1.0 (hackathon demo)" },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!img.ok || !img.body) throw new Error(`upstream ${img.status}`);
-    return new Response(img.body, {
-      status: 200,
-      headers: {
-        "content-type": img.headers.get("content-type") ?? "image/jpeg",
-        "cache-control": "public, max-age=86400",
-      },
-    });
-  } catch {
-    return NextResponse.json({ error: "image unavailable" }, { status: 404 });
-  }
+  // redirect to the CDN thumb: no proxying bytes through our server, and the
+  // browser caches the redirect so repeat views are instant
+  return new Response(null, {
+    status: 302,
+    headers: { location: src, "cache-control": "public, max-age=86400, s-maxage=86400" },
+  });
 }

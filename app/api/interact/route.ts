@@ -6,7 +6,9 @@ import { cardsById } from "@/data/cards";
 import { getLiveCard } from "@/lib/qloo/live-cards";
 
 type Body = {
-  cardId: string;
+  cardId?: string;
+  /** batch of likes (vibe wall submit) — one round trip instead of 25 */
+  cardIds?: string[];
   interaction: "like" | "dislike" | "skip";
   source?: string;
 };
@@ -17,14 +19,17 @@ type Body = {
  */
 export async function POST(req: Request) {
   const body = (await req.json()) as Body;
-  const card = cardsById().get(body.cardId) ?? getLiveCard(body.cardId);
-  if (!card) return NextResponse.json({ error: "unknown card" }, { status: 400 });
+  const ids = body.cardIds ?? (body.cardId ? [body.cardId] : []);
+  const cards = ids.slice(0, 60).map((id) => cardsById().get(id) ?? getLiveCard(id));
+  if (cards.length === 0 || cards.some((c) => !c)) return NextResponse.json({ error: "unknown card" }, { status: 400 });
   if (!["like", "dislike", "skip"].includes(body.interaction)) {
     return NextResponse.json({ error: "bad interaction" }, { status: 400 });
   }
 
   const session = await resolveSession();
-  applyInteraction(session.state, card, body.interaction, session.currentRound, `card:${card.id}`, body.source ?? "feed");
+  for (const card of cards) {
+    applyInteraction(session.state, card!, body.interaction, session.currentRound, `card:${card!.id}`, body.source ?? "feed");
+  }
   await saveSession(session);
 
   const decisive = session.state.signals.filter((s) => s.interaction !== "skip").length;

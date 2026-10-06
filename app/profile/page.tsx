@@ -5,6 +5,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import type { TasteProfile } from "@/lib/types";
 import { domainColor } from "@/components/domain";
+import { ConnectAgent } from "@/components/connect-agent";
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState<TasteProfile | null>(null);
@@ -88,6 +89,13 @@ export default function ProfilePage() {
           <span>{Math.round(profile.confidence * 100)}% confidence</span>
         </motion.div>
         <p className="dim text-sm mt-5 max-w-lg mx-auto italic">{profile.tasteSummary}</p>
+      </section>
+
+      {/* connect to an agent */}
+      <section className="px-5 sm:px-8 max-w-3xl mx-auto mb-16">
+        <h2 className="font-display text-2xl mb-1">Give this to your AI</h2>
+        <p className="dim text-sm mb-4">Connect your taste to an agent so it recommends like it knows you.</p>
+        <ConnectAgent />
       </section>
 
       {/* taste DNA constellation */}
