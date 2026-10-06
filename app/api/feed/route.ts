@@ -15,7 +15,9 @@ export async function GET(req: Request) {
   const session = await resolveSession(url.searchParams.get("sid") ?? undefined);
 
   const { cards, adapted, pools } = await nextBatch(session, count);
-  await markShown(session, cards.map((c) => c.id));
+  // round bumps once per batch served, so the client's "gallery wall N" logic
+  // tracks what the user actually saw — not how many requests it took to serve
+  await markShown(session, cards.map((c) => c.id), 1);
 
   const decisive = session.state.signals.filter((s) => s.interaction !== "skip").length;
   const confidence = computeConfidence(session.state);
