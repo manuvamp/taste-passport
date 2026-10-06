@@ -198,6 +198,15 @@ function useNearBottom(ref: React.RefObject<HTMLElement | null>, fn: () => void,
   }, [ref, margin]);
 }
 
+function shuffled<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 type Phase = "vibes" | "curated" | "deeper";
 
 export default function Discover() {
@@ -256,6 +265,8 @@ function VibeWall({ onDone }: { onDone: () => void }) {
   const [picks, setPicks] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const cursor = useRef(0);
+  const queue = useRef<Tile[]>(tiles);
+  const lap = useRef(0);
   const inflight = useRef(0);
   const readyRef = useRef<Tile[]>([]);
   const pickedRef = useRef(picked);
@@ -266,8 +277,14 @@ function VibeWall({ onDone }: { onDone: () => void }) {
   // keep a deep buffer of fully-loaded tiles ahead of what's on screen
   const pump = useCallback(() => {
     const available = () => readyRef.current.filter((t) => !pickedRef.current.has(t.id)).length;
-    while (inflight.current < 10 && cursor.current < tiles.length && available() + inflight.current < wantRef.current + 160) {
-      const t = tiles[cursor.current++];
+    let guard = 0;
+    while (inflight.current < 10 && guard++ < 400 && available() + inflight.current < wantRef.current + 160) {
+      if (cursor.current >= queue.current.length) {
+        // out of fresh tiles: start another lap, shuffled, so the wall never ends
+        lap.current++;
+        queue.current = [...queue.current, ...shuffled(tiles).map((x) => ({ ...x, key: `${x.key}#${lap.current}` }))];
+      }
+      const t = queue.current[cursor.current++];
       if (pickedRef.current.has(t.id)) continue;
       inflight.current++;
       preload(t.src).then((ok) => {
@@ -303,8 +320,8 @@ function VibeWall({ onDone }: { onDone: () => void }) {
   useEffect(() => {
     visibleLen.current = slots.length;
   }, [slots]);
-  const exhausted = cursor.current >= tiles.length && inflight.current === 0;
-  const loadingMore = slots.length < want && !exhausted;
+  const exhausted = false; // endless: laps reshuffle everything you haven't picked
+  const loadingMore = slots.length < want;
 
   useNearBottom(sentinel, () => {
     if (visibleLen.current >= wantRef.current - 12) setWant((w) => w + 60);
@@ -420,7 +437,9 @@ function useCardSource(target: number, onProgress?: (p: Progress, mode: string) 
   const pools = useRef<Record<string, ExplorationPool>>({});
   const fetching = useRef(false);
   const emptyStreak = useRef(0);
-  const [exhausted, setExhausted] = useState(false);
+  const history = useRef<TasteCard[]>([]);
+  const liked = useRef(new Set<string>());
+  const exhausted = false; // endless: when the graph runs dry we replay what you haven't picked, shuffled
   const [loading, setLoading] = useState(true);
   const [ticks, setTicks] = useState(0); // bumps when new cards land in the buffer
   const cb = useRef(onProgress);
@@ -448,8 +467,16 @@ function useCardSource(target: number, onProgress?: (p: Progress, mode: string) 
       const ok = await Promise.all(withPhoto.map((c) => preload(cardImageSrc(c)!)));
       const good = withPhoto.filter((_, i) => ok[i]);
       emptyStreak.current = good.length === 0 ? emptyStreak.current + 1 : 0;
-      if (emptyStreak.current === 3) seen.current.clear(); // supply ran low: let the graph recycle cards you haven't picked
-      if (emptyStreak.current >= 10) setExhausted(true); // seeds rotate per call, so a few empty batches in a row are normal
+      if (emptyStreak.current === 2) seen.current.clear(); // supply ran low: let the graph recycle cards you haven't picked
+      if (good.length) history.current.push(...good);
+      if (emptyStreak.current >= 2) {
+        const known = new Set(buffer.current.map((c) => c.id));
+        const replay = shuffled(history.current.filter((c) => !liked.current.has(c.id) && !known.has(c.id))).slice(0, 24);
+        if (replay.length) {
+          buffer.current.push(...replay);
+          setTicks((t) => t + 1);
+        }
+      } // seeds rotate per call, so a few empty batches in a row are normal
       if (good.length) {
         // interleave domains so neighbouring cards never feel samey
         const lanes = new Map<string, TasteCard[]>();
@@ -470,14 +497,15 @@ function useCardSource(target: number, onProgress?: (p: Progress, mode: string) 
   // keep ~target cards queued so scrolling never waits on the network
   useEffect(() => {
     const t = setInterval(() => {
-      if (!exhausted && buffer.current.length < target) fetchBatch();
+      if (buffer.current.length < target) fetchBatch();
     }, 350);
     return () => clearInterval(t);
-  }, [exhausted, target, fetchBatch]);
+  }, [target, fetchBatch]);
 
   const take = useCallback((n: number) => buffer.current.splice(0, n), []);
   const buffered = useCallback(() => buffer.current.length, []);
-  return { take, buffered, pools, exhausted, loading, ticks };
+  const markLiked = useCallback((id: string) => liked.current.add(id), []);
+  return { take, buffered, pools, exhausted, loading, ticks, markLiked };
 }
 
 /* ====================== PHASE 2 — curated infinite feed ====================== */
@@ -537,11 +565,12 @@ function CuratedFeed({ onNext, domains, goal = FEED_TARGET, step = 1, nextLabel 
   const like = useCallback(
     (card: TasteCard) => {
       likedIds.current.add(card.id);
+      src.markLiked(card.id);
       replaceAt(card.id); // only this card leaves; a new one takes its place
       setLikes((n) => n + 1);
       postLikes([card.id], [card]).then((p) => p && setProgress((prev) => mergeProgress(prev, p)));
     },
-    [replaceAt]
+    [replaceAt, src]
   );
 
   const pct = Math.min(100, Math.round((likes / goal) * 100));
