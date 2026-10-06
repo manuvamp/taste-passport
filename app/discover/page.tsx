@@ -50,12 +50,12 @@ function preload(src: string, timeoutMs = 9000): Promise<boolean> {
   });
 }
 
-async function postLikes(ids: string[]): Promise<Progress | null> {
+async function postLikes(ids: string[], cards?: TasteCard[]): Promise<Progress | null> {
   try {
     const res = await fetch("/api/interact", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(ids.length === 1 ? { cardId: ids[0], interaction: "like" } : { cardIds: ids, interaction: "like" }),
+      body: JSON.stringify({ ...(ids.length === 1 ? { cardId: ids[0] } : { cardIds: ids }), interaction: "like", cards }),
     });
     return ((await res.json()) as { progress: Progress }).progress;
   } catch {
@@ -265,10 +265,7 @@ const VibeTile = memo(function VibeTile({ tile, onPick }: { tile: Tile; onPick: 
     >
       {/* already preloaded + decoded, so it paints instantly */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={tile.src} alt="" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
-      <span className="absolute inset-x-0 bottom-0 px-1.5 pt-4 pb-1 text-[10px] sm:text-[11px] leading-tight font-medium bg-gradient-to-t from-black/80 to-transparent line-clamp-2">
-        {tile.title}
-      </span>
+      <img src={tile.src} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
     </button>
   );
 });
@@ -308,16 +305,12 @@ function CuratedFeed({ onProfile }: { onProfile: () => void }) {
         seen.current.add(c.id);
         seen.current.add(c.title.toLowerCase());
       });
-      if (data.cards.length === 0) {
-        setDone(true);
-        return;
-      }
       // only cards whose photo is fully loaded ever reach the screen
       const withPhoto = fresh.filter((c) => !noPhoto(c));
       const ok = await Promise.all(withPhoto.map((c) => preload(cardImageSrc(c)!)));
       const shown = withPhoto.filter((_, i) => ok[i]);
       emptyStreak.current = shown.length === 0 ? emptyStreak.current + 1 : 0;
-      if (emptyStreak.current >= 5) setDone(true);
+      if (emptyStreak.current >= 8) setDone(true); // the graph rotates seeds each call, so a few empty batches in a row are normal
       if (shown.length) setCards((prev) => [...prev, ...shown]);
     } catch {
       // transient: the next near-bottom check retries
@@ -336,7 +329,7 @@ function CuratedFeed({ onProfile }: { onProfile: () => void }) {
   const like = useCallback((card: TasteCard) => {
     // positive-only: card disappears, the next one slides in
     setCards((prev) => prev.filter((c) => c.id !== card.id));
-    postLikes([card.id]).then((p) => p && setProgress(p));
+    postLikes([card.id], [card]).then((p) => p && setProgress(p));
   }, []);
 
   const decisive = progress?.decisive ?? 0;
@@ -396,7 +389,7 @@ const FeedCard = memo(function FeedCard({ card, pool, onLike }: { card: TasteCar
     >
       {/* preloaded before this card was added, so no pop-in */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={cardImageSrc(card)!} alt="" decoding="async" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
+      <img src={cardImageSrc(card)!} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
       <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/5 to-transparent" />
       <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
         <span className="text-[9px] uppercase tracking-[0.18em] rounded-full px-2 py-0.5 backdrop-blur-sm" style={{ background: `${color}33`, color }}>
