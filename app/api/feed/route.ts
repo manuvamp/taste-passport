@@ -3,9 +3,13 @@ import { resolveSession } from "@/lib/session";
 import { nextBatch, computeConfidence, confidenceLabel } from "@/lib/taste/engine";
 import { markShown } from "@/lib/store/db";
 import { getQlooAdapter } from "@/lib/qloo";
+import { rateLimit, clientKey } from "@/lib/rate-limit";
 
 /** Adaptive feed: returns the next batch, adapted to the user's taste state. */
 export async function GET(req: Request) {
+  if (!rateLimit(clientKey(req, "feed"), 40, 1)) {
+    return NextResponse.json({ error: "slow down" }, { status: 429 });
+  }
   const url = new URL(req.url);
   const count = Math.min(Number(url.searchParams.get("count") ?? 12), 24);
   const session = await resolveSession(url.searchParams.get("sid") ?? undefined);

@@ -4,6 +4,7 @@ import { buildProfile } from "@/lib/taste/engine";
 import { generatePlan } from "@/lib/agent/taste-agent";
 import { getQlooAdapter } from "@/lib/qloo";
 import { planProgressStart, planProgressTick, planProgressDone, planProgressFail } from "@/lib/agent/progress";
+import { rateLimit, clientKey } from "@/lib/rate-limit";
 
 type Body = { request: string; planId?: string };
 
@@ -16,6 +17,9 @@ type Body = { request: string; planId?: string };
  * coarse step ticks while a live (cold) plan is being generated.
  */
 export async function POST(req: Request) {
+  if (!rateLimit(clientKey(req, "compare"), 20, 0.34)) {
+    return NextResponse.json({ error: "slow down — the agent is thinking about your last request" }, { status: 429 });
+  }
   const { request, planId: clientPlanId } = (await req.json()) as Body;
   if (!request?.trim()) {
     return NextResponse.json({ error: "request required" }, { status: 400 });
