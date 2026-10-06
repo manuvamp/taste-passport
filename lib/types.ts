@@ -125,6 +125,8 @@ export type TasteProfile = {
   /** Up to ~36 liked items that have a real photo, for the visual results page. */
   gallery?: { title: string; domain: Domain; cardId: string; imageUrl: string; weight: number }[];
   positiveSignals: { title: string; domain: Domain; cardId: string; weight: number }[];
+  /** Where you sit on five taste spectrums, 0 = left pole, 1 = right pole. */
+  axes?: { left: string; right: string; value: number }[];
   /** Items we predict you will love (not picked yet), each with the picks that point to it. */
   suggestions?: { title: string; domain: Domain; cardId: string; imageUrl: string; why: string[] }[];
   negativeSignals: { title: string; domain: Domain; cardId?: string; weight: number }[];

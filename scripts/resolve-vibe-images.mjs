@@ -52,6 +52,7 @@ const OUTF = new URL("../data/vibe-images.json", import.meta.url);
 const out = existsSync(OUTF) ? JSON.parse(readFileSync(OUTF, "utf8")) : {};
 const themes = VIBES.filter((v) => v.imageQuery);
 for (const v of themes) {
+  if ((out[v.id]?.length ?? 0) >= PER_THEME) continue;
   const lead = await wikiLead(v.imageQuery);
   const found = await commons(v.imageQuery);
   const urls = [...new Set([...(out[v.id] ?? []), ...lead, ...found])].slice(0, PER_THEME);

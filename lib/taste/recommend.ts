@@ -5,6 +5,7 @@ import { tagAffinity } from "@/lib/qloo/mock";
 import { resolveCardEntities, qlooEntityName } from "@/lib/qloo/resolve";
 import { qlooInsights, qlooTagId } from "@/lib/qloo/insights";
 import { getQlooAdapter } from "@/lib/qloo";
+import { imageFor, scoreCandidates } from "@/lib/taste/engine";
 
 export type RecItem = { title: string; subtitle?: string; imageUrl?: string; why: string[]; affinity?: number };
 export type RecSection = { id: string; group: "watch" | "read" | "go" | "own"; title: string; kicker: string; items: RecItem[]; needsCity?: boolean };
@@ -65,10 +66,53 @@ function toItems(entities: Entities, exclude: Set<string>, opts: { image?: boole
     .filter((i) => (opts.image ? !!i.imageUrl : true));
 }
 
+/** Always-available picks from the curated graph, grouped like the live sections. Never empty. */
+function localSections(state: TasteState): RecSection[] {
+  const liked = new Set(state.signals.filter((sg) => sg.interaction === "like").map((sg) => sg.cardId));
+  const ranked = scoreCandidates(state, {}, liked).filter((c) => c.card.domain !== "music" && !isVibe(c.card.id) && imageFor(c.card));
+  const pick = (domains: string[], n: number) =>
+    ranked
+      .filter((c) => domains.includes(c.card.domain))
+      .slice(0, n)
+      .map((c): RecItem => ({ title: c.card.title, subtitle: c.card.tags.slice(0, 2).join(" · "), imageUrl: imageFor(c.card), why: [], affinity: c.score }));
+
+  // cuisines: group every food card by its cuisine tag and score the cuisine against the user's taste vector
+  const food = SEED_CARDS.filter((c) => c.domain === "food" && imageFor(c));
+  const byCuisine = new Map<string, typeof food>();
+  for (const c of food) {
+    const tag = c.tags.find((t) => t.endsWith("-food"));
+    if (tag) byCuisine.set(tag.replace("-food", ""), [...(byCuisine.get(tag.replace("-food", "")) ?? []), c]);
+  }
+  const score = (c: (typeof food)[number]) => c.tags.reduce((a, t) => a + Math.max(0, state.tagVector[t] ?? 0), 0);
+  const cuisines = [...byCuisine.entries()]
+    .map(([name, cards]) => ({ name, cards, s: cards.reduce((a, c) => a + score(c), 0) / cards.length }))
+    .sort((a, b) => b.s - a.s)
+    .slice(0, 8)
+    .map(({ name, cards }): RecItem => ({
+      title: name.charAt(0).toUpperCase() + name.slice(1),
+      subtitle: cards.slice(0, 3).map((c) => c.title).join(" · "),
+      imageUrl: imageFor(cards.sort((a, b) => score(b) - score(a))[0]),
+      why: [],
+    }));
+
+  const S = (id: string, group: RecSection["group"], title: string, kicker: string, items: RecItem[]): RecSection => ({ id, group, title, kicker, items });
+  return [
+    S("cuisines", "go", "Cuisines you'd love", "Ranked by how closely each kitchen matches your taste.", cuisines),
+    S("l-food", "go", "Dishes & dining to try", "Straight from your taste fingerprint.", pick(["food", "lifestyle"], 12)),
+    S("l-places", "go", "Places that fit you", "Destinations and atmospheres you'd feel at home in.", pick(["travel", "architecture"], 12)),
+    S("l-screen", "watch", "Worth watching", "Films and series close to what you picked.", pick(["film", "tv"], 12)),
+    S("l-games", "watch", "Worth playing", "Games with your mood.", pick(["game"], 12)),
+    S("l-read", "read", "Worth reading", "Books close to your taste.", pick(["book"], 12)),
+    S("l-art", "read", "Art & culture", "Galleries, movements and makers you'd connect with.", pick(["art"], 12)),
+    S("l-own", "own", "Brands & objects", "Things that share your eye.", pick(["brand", "fashion"], 12)),
+  ].filter((x) => x.items.length > 0);
+}
+
 export async function buildRecommendations(state: TasteState, city?: string): Promise<{ sections: RecSection[]; mode: "live" | "mock" }> {
-  if (getQlooAdapter().mode !== "live") return { sections: [], mode: "mock" };
+  const local = localSections(state);
+  if (getQlooAdapter().mode !== "live") return { sections: local, mode: "mock" };
   const interests = await interestsFor(state);
-  if (!interests.length) return { sections: [], mode: "live" };
+  if (!interests.length) return { sections: local, mode: "live" };
 
   const picked = new Set<string>();
   for (const sg of state.signals) {
@@ -114,7 +158,8 @@ export async function buildRecommendations(state: TasteState, city?: string): Pr
     doing = actRes.flat();
   }
 
-  const S = (id: string, group: RecSection["group"], title: string, kicker: string, items: RecItem[], extra: Partial<RecSection> = {}): RecSection => ({ id, group, title, kicker, items, ...extra });
+  const uniq = (items: RecItem[]) => items.filter((it, i) => items.findIndex((x) => x.title === it.title) === i);
+  const S = (id: string, group: RecSection["group"], title: string, kicker: string, items: RecItem[], extra: Partial<RecSection> = {}): RecSection => ({ id, group, title, kicker, items: uniq(items), ...extra });
   const sections: RecSection[] = [
     S("films", "watch", "Films you'd love", "Matched to what you picked.", toItems(films, picked, { image: true })),
     S("series", "watch", "Series to start", "Shows that share your taste.", toItems(series, picked, { image: true })),
@@ -126,5 +171,9 @@ export async function buildRecommendations(state: TasteState, city?: string): Pr
     S("do", "go", city ? `Things to do in ${city}` : "Things to do", "Activities that fit your temperament.", doing, { needsCity: !city }),
     S("brands", "own", "Brands with your taste", "Labels and makers that share your eye.", toItems(brands, picked)),
   ];
-  return { sections: sections.filter((s) => s.items.length > 0 || s.needsCity), mode: "live" };
+  const liveSections = sections.filter((x) => x.items.length > 0 || x.needsCity);
+  // live graph picks first, then the always-available curated ones (cuisines lead the Go & eat tab)
+  const cuisinesFirst = local.filter((x) => x.id === "cuisines");
+  const rest = local.filter((x) => x.id !== "cuisines");
+  return { sections: [...cuisinesFirst, ...liveSections, ...rest], mode: "live" };
 }

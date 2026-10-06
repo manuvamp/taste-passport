@@ -162,6 +162,24 @@ export default function ProfilePage() {
     );
   }
 
+  // morning → night, each slot filled from the best-matching unpicked suggestion of fitting kinds
+  const day = (() => {
+    const pool = [...suggestions];
+    const take = (domains: string[]) => {
+      const i = pool.findIndex((s) => domains.includes(s.domain));
+      return i >= 0 ? pool.splice(i, 1)[0] : undefined;
+    };
+    const slots: [string, string[], string][] = [
+      ["Morning", ["food", "lifestyle"], "Start slow with this"],
+      ["Afternoon", ["art", "architecture", "travel"], "Lose an hour here"],
+      ["Evening", ["food", "lifestyle", "brand"], "Dinner, sorted"],
+      ["Night", ["film", "tv", "book", "game"], "Wind down with this"],
+    ];
+    return slots.flatMap(([slot, doms, line]) => {
+      const it = take(doms);
+      return it ? [{ slot, title: it.title, imageUrl: it.imageUrl, line }] : [];
+    });
+  })();
   const maxTag = Math.max(...profile.inferredTags.map((t) => t.weight), 1);
   const domains = Object.entries(profile.domainPreferences).sort((a, b) => b[1] - a[1]);
   const collage = picks.slice(0, 18);
@@ -218,6 +236,52 @@ export default function ProfilePage() {
           ))}
         </div>
       </section>
+
+      {/* taste signature: where you sit on five spectrums */}
+      {profile.axes && (
+        <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-10">
+          <h2 className="text-sm uppercase tracking-[0.18em] dim mb-4">Your taste signature</h2>
+          <div className="grid sm:grid-cols-2 gap-x-10 gap-y-5">
+            {profile.axes.map((a) => (
+              <div key={a.left}>
+                <div className="flex justify-between text-sm mb-1.5">
+                  <span className={a.value < 0.45 ? "text-[var(--ink)]" : "dim"}>{a.left}</span>
+                  <span className={a.value > 0.55 ? "text-[var(--ink)]" : "dim"}>{a.right}</span>
+                </div>
+                <div className="relative h-1.5 rounded-full bg-[var(--hairline)]">
+                  <motion.div
+                    className="absolute top-1/2 w-3.5 h-3.5 -mt-[7px] -ml-[7px] rounded-full bg-[var(--like)] shadow"
+                    initial={{ left: "50%" }}
+                    animate={{ left: `${Math.round(a.value * 100)}%` }}
+                    transition={{ type: "spring", stiffness: 120, damping: 16, delay: 0.2 }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* a day made for you, assembled from what we think you'd love */}
+      {day.length >= 3 && (
+        <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-10">
+          <h2 className="text-sm uppercase tracking-[0.18em] dim mb-4">A day made for you</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {day.map((d) => (
+              <div key={d.slot} className="relative aspect-[4/5] rounded-2xl overflow-hidden bg-[var(--bg-softer)]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={d.imageUrl} alt="" referrerPolicy="no-referrer" className="absolute inset-0 w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
+                <div className="absolute top-2.5 left-2.5 text-[10px] uppercase tracking-[0.18em] rounded-full px-2 py-0.5 bg-black/55 backdrop-blur-sm">{d.slot}</div>
+                <div className="absolute inset-x-0 bottom-0 p-3">
+                  <p className="font-display text-base leading-tight">{d.title}</p>
+                  <p className="text-[10px] opacity-70 mt-0.5">{d.line}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* your picks — one row, full editor behind "view all" */}
       <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-10">
