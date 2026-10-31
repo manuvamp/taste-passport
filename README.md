@@ -16,6 +16,19 @@ you → taps & choices → cultural entities → Qloo taste graph
      → any AI agent → answers that feel like you
 ```
 
+**Live:** https://taste-passport-nu.vercel.app · **Demo video:** https://youtu.be/MJW_Jn_pDmM
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Landing](docs/screenshots/1-landing.jpg) | ![Vibe wall](docs/screenshots/2-vibe-wall.jpg) |
+| **Landing**: teach your AI what you like in about 3 minutes | **Vibe wall**: tap people-free photos that feel like you |
+| ![Taste DNA](docs/screenshots/4-taste-dna.jpg) | ![Made for you](docs/screenshots/5-taste-dna-more.jpg) |
+| **Taste DNA**: archetype, domain mix and what you kept coming back to | **Made for you**: Qloo picks, each citing the signals behind it |
+| ![What Qloo changed](docs/screenshots/6-agent-compare.jpg) | ![Grounded plan](docs/screenshots/7-agent-compare-more.jpg) |
+| **Taste agent**: the same request, generic vs taste-grounded | **Grounded plan**: every pick explained by Qloo affinity |
+
 ---
 
 ## Why it exists
