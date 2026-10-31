@@ -103,18 +103,25 @@ export function normalizeEntity(raw: Record<string, unknown>): QlooEntity | null
   };
 }
 
+/** GET with a timeout; bursts that hit the rate limit (429) or a 5xx get two short backoff retries. */
 export async function fetchJson(url: string, timeoutMs = 20000): Promise<Record<string, unknown>> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { headers: headers(), signal: ctrl.signal });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Qloo ${res.status}: ${body.slice(0, 200)}`);
+  for (let attempt = 0; ; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { headers: headers(), signal: ctrl.signal });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        if ((res.status === 429 || res.status >= 500) && attempt < 2) {
+          await new Promise((r) => setTimeout(r, 350 * (attempt + 1) + Math.random() * 250));
+          continue;
+        }
+        throw new Error(`Qloo ${res.status}: ${body.slice(0, 200)}`);
+      }
+      return (await res.json()) as Record<string, unknown>;
+    } finally {
+      clearTimeout(timer);
     }
-    return (await res.json()) as Record<string, unknown>;
-  } finally {
-    clearTimeout(timer);
   }
 }
 

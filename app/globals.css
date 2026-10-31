@@ -91,7 +91,7 @@ body {
   background: var(--bg-soft);
 }
 
-.overline {
+.eyebrow {
   font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.25em;
@@ -174,4 +174,22 @@ input:focus-visible {
 @keyframes tp-pop {
   from { opacity: 0; transform: scale(0.82); }
   to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes tp-picked {
+  0% { transform: scale(1); opacity: 1; }
+  40% { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(0.6); opacity: 0; }
+}
+
+@keyframes tp-heart {
+  0% { opacity: 0; transform: scale(0.3); }
+  35% { opacity: 1; transform: scale(1.2); }
+  70% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.15); }
+}
+
+@keyframes tp-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }

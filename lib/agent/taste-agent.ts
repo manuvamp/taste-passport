@@ -4,6 +4,8 @@ import { getQlooAdapter } from "@/lib/qloo";
 import { resolveCardEntities, qlooEntityName } from "@/lib/qloo/resolve";
 import { getLiveCard } from "@/lib/qloo/live-cards";
 import { llmWrite } from "@/lib/agent/llm";
+import { isVibe } from "@/data/vibes";
+import { vibeProxies } from "@/lib/taste/signals";
 
 /**
  * The Taste Agent: request + taste profile + Qloo cultural context -> a plan.
@@ -58,11 +60,22 @@ function detectDomains(request: string): Domain[] {
   return hits.length ? hits : FULL_DAY_PLAN;
 }
 
-function interestsFromProfile(profile: TasteProfile, domain: Domain): string[] {
-  // Core entities lead; domain-relevant likes get appended first.
-  const domainLikes = profile.positiveSignals.filter((s) => s.domain === domain).map((s) => s.cardId);
-  const rest = profile.positiveSignals.filter((s) => s.domain !== domain).map((s) => s.cardId);
-  return [...domainLikes, ...rest].slice(0, 10);
+/**
+ * Graph seeds from the profile: domain-relevant likes first. Vibe tiles ("Old library") aren't graph
+ * entities, so each is represented by its closest real entity — but explanations keep naming the
+ * thing the person actually picked.
+ */
+function interestsFromProfile(profile: TasteProfile, domain: Domain): { ids: string[]; label: Map<string, string> } {
+  const signals = [...profile.positiveSignals.filter((s) => s.domain === domain), ...profile.positiveSignals.filter((s) => s.domain !== domain)];
+  const label = new Map<string, string>();
+  const real = signals.filter((s) => !isVibe(s.cardId));
+  for (const s of real) label.set(s.cardId, s.title);
+  const proxies = vibeProxies(
+    signals.filter((s) => isVibe(s.cardId)).map((s) => s.cardId),
+    new Set(real.map((s) => s.cardId))
+  );
+  for (const [seed, from] of proxies) if (!label.has(seed)) label.set(seed, from[0]);
+  return { ids: [...label.keys()].slice(0, 10), label };
 }
 
 /**
@@ -122,11 +135,18 @@ export async function generatePlan(
     // In live mode, profile card ids must become real Qloo entity ids before
     // they can seed /v2/insights; mock mode passes card ids straight through.
     const profileInterests = interestsFromProfile(profile, domains[0]);
-    const resolvedMap = await resolveCardEntities(profileInterests);
+    const resolvedMap = await resolveCardEntities(profileInterests.ids);
     opts.onStage?.(1); // entities resolved — querying the graph now
     const interests = [...new Set(Object.values(resolvedMap).map((r) => r.entityId))];
+    const picked = new Map<string, string>();
+    for (const [cardId, r] of Object.entries(resolvedMap)) {
+      const name = profileInterests.label.get(cardId) ?? r.name;
+      picked.set(r.entityId, name);
+      picked.set(r.entityId.replace(/^card:/, ""), name); // mock graph explains with bare card ids
+    }
     const usedNames = new Set<string>();
     const nameFor = (entityId: string): string | undefined => {
+      if (picked.has(entityId)) return picked.get(entityId);
       if (entityId.startsWith("card:")) return byId.get(entityId.slice(5))?.title;
       return qlooEntityName(entityId) ?? getLiveCard(`qloo:${entityId}`)?.title ?? byId.get(entityId)?.title;
     };

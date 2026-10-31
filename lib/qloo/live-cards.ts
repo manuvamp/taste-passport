@@ -21,6 +21,7 @@ const SUBTYPE_TO_DOMAIN: Record<string, Domain> = {
   "urn:entity:brand": "brand",
   "urn:entity:destination": "travel",
   "urn:entity:book": "book",
+  "urn:entity:videogame": "game",
   "urn:entity:video_game": "game",
   "urn:entity:podcast": "lifestyle",
   "urn:entity:person": "lifestyle",

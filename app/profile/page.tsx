@@ -24,6 +24,21 @@ const DOMAIN_LABEL: Record<string, string> = {
   music: "Music",
 };
 
+/** "japanese-food" → "Japanese food", "sci-fi" → "sci fi" */
+const PROPER = /^(japanese|french|italian|nordic|korean|moroccan|danish|turkish|mexican|cuban|himalayan|american|british|chinese|indian|thai|greek|spanish|persian|african|latin|brazilian|german|dutch|soviet|colombian)$/;
+const niceTag = (t: string) => {
+  const w = t.endsWith("-food") ? t.slice(0, -5) : t;
+  const cap = t.endsWith("-food") || PROPER.test(w) ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+  return t.endsWith("-food") ? `${cap} food` : cap.replace(/-/g, " ");
+};
+
+/** Where a recommendation goes when tapped: a web search scoped to its kind (and city, for places). */
+function lookUp(i: { title: string; subtitle?: string }, section: string, city: string): string {
+  const kind: Record<string, string> = { films: "film", series: "tv series", games: "video game", books: "book", artists: "music", podcasts: "podcast", brands: "brand", places: "travel", eat: city, do: city };
+  const extra = kind[section] ?? "";
+  return `https://www.google.com/search?q=${encodeURIComponent(`${i.title} ${extra}`.trim())}`;
+}
+
 type Item = { cardId: string; title: string; domain: string; imageUrl: string; kind: "pick" | "suggest"; why?: string[] };
 
 async function tweak(action: "remove" | "boost", cardId: string) {
@@ -52,6 +67,8 @@ export default function ProfilePage() {
   const [cityDraft, setCityDraft] = useState("");
   const [filter, setFilter] = useState("all");
   const [show, setShow] = useState<"all" | "pick" | "suggest">("all");
+  const [shared, setShared] = useState(false);
+  const [thumbs, setThumbs] = useState<string[]>([]);
 
   const load = useCallback(() => {
     return fetch("/api/taste/profile", { cache: "no-store" })
@@ -66,6 +83,7 @@ export default function ProfilePage() {
   useEffect(() => {
     load();
     try {
+      setThumbs(JSON.parse(window.localStorage.getItem("tp_wall_thumbs") ?? "[]") as string[]);
       const c = window.localStorage.getItem("tp_city") ?? "";
       setCity(c);
       setCityDraft(c);
@@ -153,37 +171,49 @@ export default function ProfilePage() {
 
   if (!profile) {
     return (
-      <main className="flex-1 flex items-center justify-center">
+      <main className="flex-1 flex items-center justify-center px-6">
         <div className="text-center">
-          <div className="w-12 h-12 rounded-full border-2 border-[var(--hairline)] border-t-[var(--ink)] animate-spin mx-auto mb-5" />
+          {thumbs.length >= 4 ? (
+            <div className="grid grid-cols-3 gap-1.5 w-40 mx-auto mb-6">
+              {thumbs.slice(0, 9).map((src, k) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={src} src={src} alt="" referrerPolicy="no-referrer" className="aspect-square w-full rounded-lg object-cover slow-pulse" style={{ animationDelay: `${(k % 3) * 0.25 + Math.floor(k / 3) * 0.25}s` }} />
+              ))}
+            </div>
+          ) : (
+            <div className="w-12 h-12 rounded-full border-2 border-[var(--hairline)] border-t-[var(--ink)] animate-spin mx-auto mb-5" />
+          )}
           <p className="dim">Reading your taste…</p>
+          <p className="faint text-xs mt-1">Finding the threads that run through your picks</p>
         </div>
       </main>
     );
   }
 
-  // morning → night, each slot filled from the best-matching unpicked suggestion of fitting kinds
-  const day = (() => {
-    const pool = [...suggestions];
-    const take = (domains: string[]) => {
-      const i = pool.findIndex((s) => domains.includes(s.domain));
-      return i >= 0 ? pool.splice(i, 1)[0] : undefined;
-    };
-    const slots: [string, string[], string][] = [
-      ["Morning", ["food"], "Start slow with this"],
-      ["Afternoon", ["art", "architecture", "travel", "lifestyle"], "Lose an hour here"],
-      ["Evening", ["food"], "Dinner, sorted"],
-      ["Night", ["film", "tv", "book", "game"], "Wind down with this"],
-    ];
-    return slots.flatMap(([slot, doms, line]) => {
-      const it = take(doms);
-      return it ? [{ slot, title: it.title, imageUrl: it.imageUrl, line }] : [];
-    });
-  })();
+  const day = profile.day ?? [];
   const maxTag = Math.max(...profile.inferredTags.map((t) => t.weight), 1);
   const domains = Object.entries(profile.domainPreferences).sort((a, b) => b[1] - a[1]);
   const collage = picks.slice(0, 18);
   const sectionsFor = (group: string) => (recs ?? []).filter((s) => s.group === group);
+  const topLive = (recs ?? []).find((s) => s.id === "top")?.items ?? [];
+
+  /** A shareable one-paragraph read of your taste (native share sheet on phones, clipboard elsewhere). */
+  const share = async () => {
+    const lines = [
+      `My taste: ${profile.archetype.name}${profile.archetype.secondary ? ` (with a ${profile.archetype.secondary.replace(/^The /, "")} streak)` : ""}.`,
+      ...(profile.threads ?? []).slice(0, 3).map((t) => `${t.label}: ${t.items.slice(0, 3).join(", ")}`),
+      `Built with Taste Passport — ${window.location.origin}`,
+    ];
+    const text = lines.join("\n");
+    try {
+      if (navigator.share) await navigator.share({ title: "My Taste Passport", text });
+      else {
+        await navigator.clipboard.writeText(text);
+        setShared(true);
+        setTimeout(() => setShared(false), 2500);
+      }
+    } catch {}
+  };
 
   const saveCity = () => {
     const c = cityDraft.trim();
@@ -209,8 +239,9 @@ export default function ProfilePage() {
           <motion.h1 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="font-display text-4xl sm:text-6xl mb-3">
             {profile.archetype.name}
           </motion.h1>
-          <p className="dim max-w-xl mx-auto leading-relaxed">{profile.archetype.description}</p>
-          <p className="text-sm mt-3 max-w-lg mx-auto italic opacity-80">{profile.tasteSummary}</p>
+          {profile.archetype.secondary && <p className="text-sm dim -mt-1 mb-3">with a {profile.archetype.secondary.replace(/^The /, "")} streak</p>}
+          <p className="dim max-w-xl mx-auto leading-relaxed">{profile.narrative}</p>
+          <p className="text-xs mt-3 max-w-lg mx-auto italic opacity-60">{profile.archetype.description}</p>
           <div className="mt-4 inline-flex items-center gap-3 text-xs dim border hairline rounded-full px-4 py-2 bg-[var(--bg)]/60">
             <span>{profile.interactionCount} signals</span>
             <span className="w-px h-3 bg-[var(--hairline)]" />
@@ -218,24 +249,186 @@ export default function ProfilePage() {
             <span className="w-px h-3 bg-[var(--hairline)]" />
             <span>{Math.round(profile.confidence * 100)}% mapped</span>
           </div>
+          <div className="mt-4">
+            <button onClick={share} className="btn-ghost !text-xs !py-2 !px-4 bg-[var(--bg)]/60">
+              {shared ? "Copied — paste it anywhere" : "Share my taste"}
+            </button>
+          </div>
         </div>
       </section>
 
       {/* traits */}
       <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-8">
-        <div className="flex h-2 rounded-full overflow-hidden mb-3">
+        <div className="flex h-2 rounded-full overflow-hidden mb-2">
           {domains.map(([d, w]) => (
             <div key={d} style={{ width: `${w * 100}%`, background: domainColor(d) }} title={`${DOMAIN_LABEL[d] ?? d} ${Math.round(w * 100)}%`} />
+          ))}
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs dim mb-4">
+          {domains.slice(0, 6).map(([d, w]) => (
+            <span key={d} className="flex items-center gap-1.5">
+              <span className="domain-dot" style={{ background: domainColor(d) }} />
+              {DOMAIN_LABEL[d] ?? d} <span className="faint">{Math.round(w * 100)}%</span>
+            </span>
           ))}
         </div>
         <div className="flex flex-wrap gap-2">
           {profile.inferredTags.slice(0, 12).map((t) => (
             <span key={t.tag} className="text-sm border hairline rounded-full px-3 py-1" style={{ opacity: 0.45 + 0.55 * Math.sqrt(t.weight / maxTag) }}>
-              {t.tag}
+              {niceTag(t.tag)}
             </span>
           ))}
         </div>
       </section>
+
+      {/* threads: the themes you kept coming back to, with the real picks behind each */}
+      {(profile.threads?.length ?? 0) > 0 && (
+        <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-10">
+          <h2 className="text-sm uppercase tracking-[0.18em] dim mb-4">What you kept coming back to</h2>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {profile.threads!.map((t) => (
+              <div key={t.tag} className="panel-soft p-4 flex gap-3 items-center">
+                <div className="flex -space-x-3 shrink-0">
+                  {t.items.slice(0, 3).map((title) => {
+                    const g = picks.find((p) => p.title === title);
+                    return g ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img key={title} src={g.imageUrl} alt="" referrerPolicy="no-referrer" className="w-11 h-11 rounded-full object-cover border-2 border-[var(--bg)]" />
+                    ) : null;
+                  })}
+                </div>
+                <div className="min-w-0">
+                  <p className="font-display text-lg leading-tight capitalize">{t.label}</p>
+                  <p className="text-xs dim truncate">{t.items.join(" · ")}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          {(profile.hobbies?.length ?? 0) > 0 && (
+            <p className="text-sm dim mt-4">
+              <span className="text-[var(--ink)]">How you spend your time:</span> {profile.hobbies!.map((h) => h.title).join(" · ")}
+            </p>
+          )}
+        </section>
+      )}
+
+      {/* made for you */}
+      <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-14">
+        <h2 className="font-display text-2xl sm:text-3xl">Made for you</h2>
+        <p className="dim text-sm mt-1 mb-4 max-w-xl">Picked from the Qloo taste graph around what you chose. Tap anything to look it up.</p>
+        <div className="flex gap-2 overflow-x-auto pb-3 mb-2 [scrollbar-width:none]">
+          {TABS.map((t) => (
+            <button key={t.id} onClick={() => setTab(t.id)} className={`text-sm whitespace-nowrap rounded-full px-4 py-2 border ${tab === t.id ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "hairline dim"}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "top" &&
+          (topLive.length >= 6 ? (
+            <RecRow s={{ id: "top", group: "top", title: "", kicker: "", items: topLive }} bare />
+          ) : (
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+              {suggestions.slice(0, 18).map((g) => (
+                <BoardTile key={g.cardId} g={g} open={open} setOpen={setOpen} boosted={boosted} boost={boost} remove={remove} hide={hide} />
+              ))}
+            </div>
+          ))}
+        {tab === "top" && topLive.length >= 6 && (
+          <div className="mt-6">
+            <p className="text-xs uppercase tracking-[0.18em] dim mb-2">From your picks — tap to say yes or no</p>
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
+              {suggestions.slice(0, 12).map((g) => (
+                <BoardTile key={g.cardId} g={g} open={open} setOpen={setOpen} boosted={boosted} boost={boost} remove={remove} hide={hide} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tab !== "top" && (
+          <div className="space-y-8">
+            {tab === "go" && (
+              <div className="flex gap-2 items-center">
+                <input
+                  value={cityDraft}
+                  onChange={(e) => setCityDraft(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && saveCity()}
+                  placeholder="Your city — for restaurants & things to do"
+                  className="flex-1 bg-transparent border hairline rounded-full px-4 py-2 text-sm outline-none focus:border-[var(--ink)]"
+                />
+                <button onClick={saveCity} className="btn-primary !text-sm !py-2 !px-4">
+                  {city ? "Update" : "Set"}
+                </button>
+              </div>
+            )}
+            {recs === null ? (
+              <div className="space-y-8" aria-label="Loading recommendations">
+                {[0, 1].map((r) => (
+                  <div key={r}>
+                    <div className="h-5 w-48 rounded bg-[var(--bg-softer)] mb-3 animate-pulse" />
+                    <div className="flex gap-3 overflow-hidden">
+                      {Array.from({ length: 6 }, (_, k) => (
+                        <div key={k} className="shrink-0 w-36 sm:w-44 aspect-[3/4] rounded-2xl bg-[var(--bg-softer)] animate-pulse" />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <p className="dim text-xs">Asking the taste graph about you…</p>
+              </div>
+            ) : (
+              <>
+                {sectionsFor(tab).map((s) => (
+                  <RecRow key={s.id} s={s} city={city} />
+                ))}
+                {sectionsFor(tab).length === 0 && <p className="dim text-sm">Nothing here yet — keep sharpening below and this fills in.</p>}
+              </>
+            )}
+          </div>
+        )}
+      </section>
+
+      {/* a day made for you, assembled from what we think you'd love */}
+      {day.length >= 3 && (
+        <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-10">
+          <h2 className="text-sm uppercase tracking-[0.18em] dim mb-4">A day made for you</h2>
+          <div className={`grid grid-cols-2 gap-3 ${day.length === 3 ? "md:grid-cols-3" : "md:grid-cols-4"}`}>
+            {day.map((d) => (
+              <div key={d.slot} data-tile className="relative aspect-[4/5] rounded-2xl overflow-hidden bg-[var(--bg-softer)]">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={d.imageUrl} alt="" referrerPolicy="no-referrer" onError={(e) => ((e.currentTarget.closest("[data-tile]") as HTMLElement | null)?.style.setProperty("display", "none"))} className="absolute inset-0 w-full h-full object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
+                <div className="absolute top-2.5 left-2.5 text-[10px] uppercase tracking-[0.18em] rounded-full px-2 py-0.5 bg-black/55 backdrop-blur-sm">{d.slot}</div>
+                <div className="absolute inset-x-0 bottom-0 p-3">
+                  <p className="font-display text-base leading-tight">{d.title}</p>
+                  <p className="text-[10px] opacity-70 mt-0.5">{d.why.length ? `Because you picked ${d.why[0]}` : d.line}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* outside your usual: cross-domain jumps, each grounded in what you picked */}
+      {profile.unexpectedConnections.length > 0 && (
+        <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-10">
+          <h2 className="text-sm uppercase tracking-[0.18em] dim mb-4">Outside your usual — but very you</h2>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {profile.unexpectedConnections.slice(0, 4).map((u) => (
+              <div key={u.title} className="panel-soft p-3 flex gap-3 items-start">
+                {u.imageUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={u.imageUrl} alt="" referrerPolicy="no-referrer" onError={(e) => e.currentTarget.remove()} className="w-16 h-20 rounded-lg object-cover shrink-0" />
+                )}
+                <div className="min-w-0">
+                  <p className="font-display text-base leading-tight">{u.title}</p>
+                  <p className="text-xs dim mt-1 leading-snug">{u.reason}</p>
+                  <p className="text-[10px] dim mt-1.5 uppercase tracking-[0.14em]">{u.source === "qloo" ? "Qloo live graph" : "local inference"}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* taste signature: where you sit on five spectrums */}
       {profile.axes && (
@@ -262,27 +455,6 @@ export default function ProfilePage() {
         </section>
       )}
 
-      {/* a day made for you, assembled from what we think you'd love */}
-      {day.length >= 3 && (
-        <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-10">
-          <h2 className="text-sm uppercase tracking-[0.18em] dim mb-4">A day made for you</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {day.map((d) => (
-              <div key={d.slot} data-tile className="relative aspect-[4/5] rounded-2xl overflow-hidden bg-[var(--bg-softer)]">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={d.imageUrl} alt="" referrerPolicy="no-referrer" onError={(e) => ((e.currentTarget.closest("[data-tile]") as HTMLElement | null)?.style.setProperty("display", "none"))} className="absolute inset-0 w-full h-full object-cover" />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 to-transparent" />
-                <div className="absolute top-2.5 left-2.5 text-[10px] uppercase tracking-[0.18em] rounded-full px-2 py-0.5 bg-black/55 backdrop-blur-sm">{d.slot}</div>
-                <div className="absolute inset-x-0 bottom-0 p-3">
-                  <p className="font-display text-base leading-tight">{d.title}</p>
-                  <p className="text-[10px] opacity-70 mt-0.5">{d.line}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
       {/* your picks — one row, full editor behind "view all" */}
       <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-10">
         <div className="flex items-baseline justify-between mb-2.5">
@@ -299,58 +471,6 @@ export default function ProfilePage() {
         </div>
       </section>
 
-      {/* made for you */}
-      <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-14">
-        <h2 className="font-display text-2xl sm:text-3xl">Made for you</h2>
-        <p className="dim text-sm mt-1 mb-4 max-w-xl">What our taste graph thinks you&apos;ll love — and what an AI with your passport would hand you.</p>
-        <div className="flex gap-2 overflow-x-auto pb-3 mb-2 [scrollbar-width:none]">
-          {TABS.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)} className={`text-sm whitespace-nowrap rounded-full px-4 py-2 border ${tab === t.id ? "bg-[var(--ink)] text-[var(--bg)] border-[var(--ink)]" : "hairline dim"}`}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        {tab === "top" && (
-          <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-2">
-            {suggestions.slice(0, 18).map((g) => (
-              <BoardTile key={g.cardId} g={g} open={open} setOpen={setOpen} boosted={boosted} boost={boost} remove={remove} hide={hide} />
-            ))}
-          </div>
-        )}
-
-        {tab !== "top" && (
-          <div className="space-y-8">
-            {tab === "go" && (
-              <div className="flex gap-2 items-center">
-                <input
-                  value={cityDraft}
-                  onChange={(e) => setCityDraft(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && saveCity()}
-                  placeholder="Your city — for restaurants & things to do"
-                  className="flex-1 bg-transparent border hairline rounded-full px-4 py-2 text-sm outline-none focus:border-[var(--ink)]"
-                />
-                <button onClick={saveCity} className="btn-primary !text-sm !py-2 !px-4">
-                  {city ? "Update" : "Set"}
-                </button>
-              </div>
-            )}
-            {recs === null ? (
-              <div className="py-10 flex justify-center">
-                <div className="w-6 h-6 rounded-full border-2 border-[var(--hairline)] border-t-[var(--ink)] animate-spin" />
-              </div>
-            ) : (
-              <>
-                {sectionsFor(tab).map((s) => (
-                  <RecRow key={s.id} s={s} />
-                ))}
-                {sectionsFor(tab).length === 0 && <p className="dim text-sm">Nothing here yet — keep sharpening below and this fills in.</p>}
-              </>
-            )}
-          </div>
-        )}
-      </section>
-
       {/* keep sharpening */}
       <section className="px-5 sm:px-8 max-w-5xl mx-auto mb-14">
         <h2 className="font-display text-2xl">Keep sharpening it</h2>
@@ -359,7 +479,7 @@ export default function ProfilePage() {
           {[
             { k: "vibes" as const, t: "More vibes", d: "Another pass at the picture wall." },
             { k: "feed" as const, t: "Back to your feed", d: "Endless picks tuned to what you've liked." },
-            { k: "deeper" as const, t: "Retake the chapters", d: "Screen, instincts, spaces and style." },
+            { k: "deeper" as const, t: "Retake the chapters", d: "Instincts, hobbies and a final sharpen." },
           ].map((s) => (
             <button key={s.k} onClick={() => restart(s.k)} className="panel p-5 text-left hover:border-[var(--ink)] transition-colors">
               <p className="font-display text-lg">{s.t}</p>
@@ -508,33 +628,40 @@ function BoardTile({
   );
 }
 
-function RecRow({ s }: { s: RecSection }) {
+function whyLine(i: RecSection["items"][number], long = false): string | null {
+  if (i.why.length) return `Because you picked ${(long ? i.why.slice(0, 2) : i.why.slice(0, 1)).join(" & ")}`;
+  if (i.near?.length) return `Close to ${i.near[0]}`;
+  return null;
+}
+
+function RecRow({ s, bare, city = "" }: { s: RecSection; bare?: boolean; city?: string }) {
   return (
     <div>
-      <h3 className="font-display text-xl">{s.title}</h3>
-      <p className="dim text-xs mb-3">{s.kicker}</p>
+      {!bare && <h3 className="font-display text-xl">{s.title}</h3>}
+      {!bare && <p className="dim text-xs mb-3">{s.kicker}</p>}
       {s.items.length === 0 ? (
         <p className="dim text-sm">Add your city above to see these.</p>
       ) : (
-        <div className="flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none]">
+        <div className={bare ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3" : "flex gap-3 overflow-x-auto pb-2 [scrollbar-width:none]"}>
           {s.items.map((i) =>
             i.imageUrl ? (
-              <div key={i.title} data-tile className="relative shrink-0 w-36 sm:w-44 aspect-[3/4] rounded-2xl overflow-hidden bg-[var(--bg-softer)]">
+              <a key={i.title} href={lookUp(i, s.id, city)} target="_blank" rel="noopener noreferrer" data-tile className={`group relative block ${bare ? "" : "shrink-0 w-36 sm:w-44"} aspect-[3/4] rounded-2xl overflow-hidden bg-[var(--bg-softer)] hover:ring-1 hover:ring-[var(--ink-dim)] transition`}>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={i.imageUrl} alt="" referrerPolicy="no-referrer" onError={(e) => ((e.currentTarget.closest("[data-tile]") as HTMLElement | null)?.style.setProperty("display", "none"))} className="absolute inset-0 w-full h-full object-cover" />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-transparent to-transparent" />
                 <div className="absolute inset-x-0 bottom-0 p-3">
                   <p className="font-display text-sm leading-tight">{i.title}</p>
                   {i.subtitle && <p className="text-[10px] dim truncate mt-0.5">{i.subtitle}</p>}
-                  {i.why.length > 0 && <p className="text-[10px] opacity-70 truncate mt-0.5">Because {i.why[0]}</p>}
+                  {whyLine(i) && <p className="text-[10px] opacity-75 truncate mt-0.5">{whyLine(i)}</p>}
                 </div>
-              </div>
+                <span className="absolute top-2 right-2 text-[10px] rounded-full px-2 py-0.5 bg-black/55 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition">Look up ↗</span>
+              </a>
             ) : (
-              <div key={i.title} className="shrink-0 w-44 sm:w-52 rounded-2xl border hairline p-4 flex flex-col">
+              <a key={i.title} href={lookUp(i, s.id, city)} target="_blank" rel="noopener noreferrer" className={`${bare ? "" : "shrink-0 w-44 sm:w-52"} rounded-2xl border hairline p-4 flex flex-col hover:border-[var(--ink-dim)] transition`}>
                 <p className="font-display text-base leading-tight">{i.title}</p>
                 {i.subtitle && <p className="text-xs dim mt-1.5">{i.subtitle}</p>}
-                {i.why.length > 0 && <p className="text-[11px] opacity-70 mt-auto pt-3">Because you picked {i.why.slice(0, 2).join(" & ")}</p>}
-              </div>
+                {whyLine(i, true) && <p className="text-[11px] opacity-70 mt-auto pt-3">{whyLine(i, true)}</p>}
+              </a>
             )
           )}
         </div>

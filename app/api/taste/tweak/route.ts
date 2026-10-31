@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { resolveSession } from "@/lib/session";
 import { applyInteraction, removeCardSignals } from "@/lib/taste/engine";
-import { saveSession } from "@/lib/store/db";
+import { updateSession } from "@/lib/store/db";
+import type { TasteState } from "@/lib/types";
 import { cardsById } from "@/data/cards";
 import { getLiveCard } from "@/lib/qloo/live-cards";
 
@@ -14,13 +15,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "bad request" }, { status: 400 });
   }
   const session = await resolveSession();
-  if (body.action === "remove") {
-    removeCardSignals(session.state, body.cardId);
-  } else {
-    const card = cardsById().get(body.cardId) ?? getLiveCard(body.cardId);
-    if (!card) return NextResponse.json({ error: "unknown card" }, { status: 400 });
-    applyInteraction(session.state, card, "like", session.currentRound, `card:${card.id}`, "tweak");
-  }
-  await saveSession(session);
-  return NextResponse.json({ ok: true, signals: session.state.signals.length });
+  const card = cardsById().get(body.cardId) ?? getLiveCard(body.cardId);
+  if (body.action === "boost" && !card) return NextResponse.json({ error: "unknown card" }, { status: 400 });
+  const apply = (state: TasteState, round: number) => {
+    if (body.action === "remove") removeCardSignals(state, body.cardId);
+    else applyInteraction(state, card!, "like", round, `card:${card!.id}`, "tweak");
+  };
+  const fresh = await updateSession(session.id, (rec) => apply(rec.state, rec.currentRound));
+  if (!fresh) return NextResponse.json({ error: "session ended" }, { status: 410 });
+  return NextResponse.json({ ok: true, signals: fresh.state.signals.length });
 }

@@ -51,7 +51,7 @@ export default function EvalPage() {
 
   return (
     <main className="flex-1 px-5 sm:px-8 pt-12 pb-24 max-w-5xl mx-auto w-full">
-      <p className="overline mb-4">Evaluation</p>
+      <p className="eyebrow mb-4">Evaluation</p>
       <h1 className="font-display text-4xl sm:text-5xl mb-3 leading-tight">Does the taste actually change the answer?</h1>
       <p className="dim mb-8 max-w-2xl leading-relaxed">
         Two demo personas run the same scenarios twice — once through a generic

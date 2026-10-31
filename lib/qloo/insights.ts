@@ -36,3 +36,20 @@ export async function qlooTagId(query: string, prefix?: string): Promise<string 
     return undefined;
   }
 }
+
+/** All tag ids for a phrase whose id starts with one of `prefixes`, in prefix-priority order. */
+export async function qlooTagIds(query: string, prefixes: string[]): Promise<string[]> {
+  const key = `tagids:${query}:${prefixes.join("|")}`;
+  const cached = cacheGet<string[]>(key);
+  if (cached) return cached;
+  try {
+    const json = await fetchJson(`${BASE}/v2/tags?${new URLSearchParams({ "filter.query": query, take: "15" })}`);
+    const ids = ((((json.results ?? {}) as Record<string, unknown>).tags ?? []) as { id?: string }[]).map((t) => t.id).filter((x): x is string => !!x);
+    const out: string[] = [];
+    for (const p of prefixes) for (const id of ids) if (id.startsWith(p) && !out.includes(id)) out.push(id);
+    cacheSet(key, out, 1000 * 60 * 60 * 24);
+    return out;
+  } catch {
+    return [];
+  }
+}

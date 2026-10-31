@@ -39,7 +39,7 @@ export const DOMAIN_TO_QLOO_TYPE: Partial<Record<Domain, string>> = {
   travel: "urn:entity:destination",
   brand: "urn:entity:brand",
   book: "urn:entity:book",
-  game: "urn:entity:video_game",
+  game: "urn:entity:videogame",
   architecture: "urn:entity:place",
   art: "urn:entity:place",
 };
@@ -77,6 +77,8 @@ export type TasteSignal = {
   round: number;
   /** Feedback loop origin, e.g. "feed" or "recommendation:<id>" */
   source?: string;
+  /** Interaction strength when not 1 (a deliberate choice, or a light "passed over" signal). */
+  strength?: number;
 };
 
 export type TasteState = {
@@ -120,7 +122,8 @@ export type TasteProfile = {
   profileVersion: number;
   interactionCount: number;
   confidence: number;
-  archetype: { name: string; description: string };
+  /** Primary archetype, plus a second strong pull when there is one. */
+  archetype: { name: string; description: string; secondary?: string };
   coreEntities: { title: string; domain: Domain; cardId: string; imageUrl?: string }[];
   /** Up to ~36 liked items that have a real photo, for the visual results page. */
   gallery?: { title: string; domain: Domain; cardId: string; imageUrl: string; weight: number }[];
@@ -130,6 +133,14 @@ export type TasteProfile = {
   /** Items we predict you will love (not picked yet), each with the picks that point to it. */
   suggestions?: { title: string; domain: Domain; cardId: string; imageUrl: string; why: string[] }[];
   negativeSignals: { title: string; domain: Domain; cardId?: string; weight: number }[];
+  /** Recurring themes across the picks, each with the real things behind it. */
+  threads?: { tag: string; label: string; items: string[] }[];
+  /** Sports & hobbies the user picked. */
+  hobbies?: { cardId: string; title: string; imageUrl?: string }[];
+  /** Qualities the user consistently passed over (from relative choices). */
+  passedOver?: string[];
+  /** A day assembled from what we think you'd love, morning to night, each slot with its reason. */
+  day?: { slot: string; title: string; imageUrl?: string; line: string; why: string[]; cardId?: string }[];
   inferredTags: { tag: string; weight: number }[];
   domainPreferences: Record<string, number>;
   clusters: ProfileCluster[];

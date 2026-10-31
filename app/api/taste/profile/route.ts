@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, resolveSession } from "@/lib/session";
 import { applyInteraction, buildProfile, computeConfidence, enrichConnectionsLive } from "@/lib/taste/engine";
-import { saveProfileVersion, saveSession, deleteSession } from "@/lib/store/db";
+import { saveProfileVersion, deleteSession, updateSession } from "@/lib/store/db";
 import { cardsById } from "@/data/cards";
 import { getQlooAdapter } from "@/lib/qloo";
 
@@ -41,13 +41,14 @@ type FeedbackBody = { cardId: string; feedback: "like" | "dislike" | "skip"; ite
 
 /** POST /api/taste/profile — continuous-learning feedback on recommendations. */
 export async function POST(req: Request) {
-  const body = (await req.json()) as FeedbackBody;
-  const card = cardsById().get(body.cardId);
-  if (!card) return NextResponse.json({ error: "unknown card" }, { status: 400 });
+  const body = (await req.json().catch(() => ({}))) as FeedbackBody;
+  const card = cardsById().get(body?.cardId);
+  if (!card || !["like", "dislike", "skip"].includes(body.feedback)) return NextResponse.json({ error: "unknown card" }, { status: 400 });
   const sid = new URL(req.url).searchParams.get("sid") ?? undefined;
-  const session = await resolveSession(sid);
-  applyInteraction(session.state, card, body.feedback, session.currentRound, `card:${card.id}`, `recommendation:${body.itemId ?? body.cardId}`);
-  await saveSession(session);
+  const stale = await resolveSession(sid);
+  const source = `recommendation:${String(body.itemId ?? body.cardId).slice(0, 60)}`;
+  const session = await updateSession(stale.id, (rec) => applyInteraction(rec.state, card, body.feedback, rec.currentRound, `card:${card.id}`, source));
+  if (!session) return NextResponse.json({ error: "session ended" }, { status: 410 });
   const profile = buildProfile(session);
   await saveProfileVersion(session, profile);
   return NextResponse.json({ ok: true, profileVersion: profile.profileVersion, confidence: profile.confidence, mode: getQlooAdapter().mode });

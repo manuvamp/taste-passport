@@ -26,10 +26,28 @@ type FeedResponse = {
   mode: string;
 };
 
-const MIN_PICKS = 20;
-const IDEAL_PICKS = 30;
-const FEED_TARGET = 25; // picks in the feed before "Go deeper" is highlighted
+const MIN_PICKS = 15;
+const IDEAL_PICKS = 25;
+const FEED_TARGET = 20; // picks in the feed before "Go deeper" is highlighted
 const POOL_LABEL: Record<ExplorationPool, string> = { exploit: "your taste", adjacent: "nearby", novel: "a surprise" };
+const DOMAIN_NAME: Record<string, string> = { tv: "series", travel: "place", architecture: "space", lifestyle: "pastime", brand: "brand", book: "book", game: "game", food: "food", film: "film", art: "art", fashion: "fashion", music: "music" };
+/** "japanese-food" → "Japanese food", "sci-fi" → "sci fi" */
+const PROPER = /^(japanese|french|italian|nordic|korean|moroccan|danish|turkish|mexican|cuban|himalayan|american|british|chinese|indian|thai|greek|spanish|persian|african|latin|brazilian|german|dutch|soviet|colombian)$/;
+const niceTag = (t: string) => {
+  const w = t.endsWith("-food") ? t.slice(0, -5) : t;
+  const cap = t.endsWith("-food") || PROPER.test(w) ? w.charAt(0).toUpperCase() + w.slice(1) : w;
+  return t.endsWith("-food") ? `${cap} food` : cap.replace(/-/g, " ");
+};
+
+function Heart() {
+  return (
+    <span className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none" aria-hidden>
+      <span className="text-4xl drop-shadow-[0_2px_8px_rgba(0,0,0,.6)]" style={{ animation: "tp-heart .34s ease-out forwards", color: "var(--like)" }}>
+        ♥
+      </span>
+    </span>
+  );
+}
 const IMAGES = vibeImages as Record<string, string[]>;
 
 /** Resolves true only when the image is fully downloaded and decoded (never shows half-loaded cards). */
@@ -53,25 +71,100 @@ function preload(src: string, timeoutMs = 9000, minW = 300): Promise<boolean> {
   });
 }
 
-async function postLikes(ids: string[], cards?: TasteCard[]): Promise<Progress | null> {
+/** One session handshake per page load, not one per batch. */
+let sessionReady: Promise<unknown> | null = null;
+function ensureSession() {
+  return (sessionReady ??= fetch("/api/session", { method: "POST" }).catch(() => (sessionReady = null)));
+}
+
+/**
+ * Every write goes through one queue: taps are sent in order and never race each other, and the feed
+ * waits for pending writes so the next batch already reflects the latest picks.
+ */
+let writes: Promise<unknown> = Promise.resolve();
+type Signal = { ids: string[]; interaction?: "like" | "dislike"; strength?: number; passed?: string[]; source?: string; cards?: TasteCard[] };
+function send(sig: Signal): Promise<Progress | null> {
+  const run = async () => {
+    await ensureSession();
+    try {
+      const res = await fetch("/api/interact", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...(sig.ids.length === 1 ? { cardId: sig.ids[0] } : { cardIds: sig.ids }),
+          interaction: sig.interaction ?? "like",
+          strength: sig.strength,
+          passed: sig.passed,
+          source: sig.source,
+          cards: sig.cards,
+        }),
+      });
+      return ((await res.json()) as { progress?: Progress }).progress ?? null;
+    } catch {
+      return null; // never block the flow on one failed write
+    }
+  };
+  const p = writes.then(run, run);
+  writes = p;
+  return p;
+}
+const postLikes = (ids: string[], cards?: TasteCard[], source?: string) => send({ ids, cards, source });
+
+/** Take a pick back (in order with every other write). */
+function unsend(cardId: string) {
+  const run = () =>
+    fetch("/api/taste/tweak", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "remove", cardId }) }).catch(() => null);
+  writes = writes.then(run, run);
+}
+
+/** The first feed batch, fetched while the wall is still being picked, so "Continue" lands on a ready feed. */
+let feedPrefetch: Promise<FeedResponse | null> | null = null;
+function prefetchFeed() {
+  feedPrefetch ??= writes
+    .catch(() => {})
+    .then(() => fetch("/api/feed?count=24"))
+    .then((r) => r.json() as Promise<FeedResponse>)
+    .then((d) => {
+      for (const c of d.cards ?? []) if (!noPhoto(c)) preload(cardImageSrc(c)!, 9000, 320); // warm the browser cache
+      return d;
+    })
+    .catch(() => null);
+}
+
+/** Thumbnails of what you tapped on the wall, so the waits that follow show your own taste. */
+function wallThumbs(): string[] {
   try {
-    const res = await fetch("/api/interact", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...(ids.length === 1 ? { cardId: ids[0] } : { cardIds: ids }), interaction: "like", cards }),
-    });
-    return ((await res.json()) as { progress: Progress }).progress;
+    return JSON.parse(window.localStorage.getItem("tp_wall_thumbs") ?? "[]") as string[];
   } catch {
-    return null; // never block the flow on one failed write
+    return [];
   }
 }
 
-function LoadingScreen({ label, pct }: { label: string; pct?: number }) {
+function LoadingScreen({ label, pct, messages, thumbs }: { label: string; pct?: number; messages?: string[]; thumbs?: string[] }) {
+  const [i, setI] = useState(0);
+  useEffect(() => {
+    if (!messages?.length) return;
+    const t = setInterval(() => setI((n) => n + 1), 1700);
+    return () => clearInterval(t);
+  }, [messages]);
+  const shown = (thumbs ?? []).slice(0, 9);
+  const line = messages?.length ? messages[Math.min(i, messages.length - 1)] : label;
   return (
     <main className="flex-1 flex items-center justify-center px-6">
       <div className="text-center w-full max-w-xs">
-        <div className="w-12 h-12 rounded-full border-2 border-[var(--hairline)] border-t-[var(--ink)] animate-spin mx-auto mb-5" />
-        <p className="dim text-sm">{label}</p>
+        {shown.length >= 4 ? (
+          <div className="grid grid-cols-3 gap-1.5 w-40 mx-auto mb-6">
+            {shown.map((src, k) => (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img key={src} src={src} alt="" referrerPolicy="no-referrer" className="aspect-square w-full rounded-lg object-cover slow-pulse" style={{ animationDelay: `${(k % 3) * 0.25 + Math.floor(k / 3) * 0.25}s` }} />
+            ))}
+          </div>
+        ) : (
+          <div className="w-12 h-12 rounded-full border-2 border-[var(--hairline)] border-t-[var(--ink)] animate-spin mx-auto mb-5" />
+        )}
+        <p key={line} className="dim text-sm" style={{ animation: "tp-fade .4s ease-out" }}>
+          {line}
+        </p>
         {pct !== undefined && (
           <div className="h-1 rounded-full bg-[var(--hairline)] overflow-hidden mt-4">
             <div className="h-full bg-[var(--ink)] transition-all duration-200" style={{ width: `${pct}%` }} />
@@ -93,25 +186,15 @@ function Steps({ current }: { current: number }) {
     <ol className="flex items-center gap-1.5 text-[11px] dim">
       {STEPS.map((label, i) => (
         <li key={label} className="flex items-center gap-1.5">
-          <span className={i === current ? "text-[var(--ink)] font-medium" : i < current ? "text-[var(--ink)] opacity-60" : ""}>
-            {i + 1} {label}
+          <span className={`whitespace-nowrap ${i === current ? "text-[var(--ink)] font-medium" : i < current ? "text-[var(--ink)] opacity-60" : ""}`}>
+            {i + 1}
+            <span className={i === current ? "" : "hidden sm:inline"}> {label}</span>
           </span>
           {i < STEPS.length - 1 && <span className="w-3 h-px bg-[var(--hairline)]" />}
         </li>
       ))}
     </ol>
   );
-}
-
-/** Keeps progress from ever moving backwards when a slow response lands after a newer one. */
-function mergeProgress(prev: Progress | null, next: Progress): Progress {
-  if (!prev) return next;
-  return {
-    ...next,
-    decisive: Math.max(prev.decisive, next.decisive),
-    interactions: Math.max(prev.interactions, next.interactions),
-    confidence: Math.max(prev.confidence, next.confidence),
-  };
 }
 
 /**
@@ -166,7 +249,7 @@ function useSlots<T>(next: () => T | undefined, keyOf: (t: T) => string) {
   const replaceAt = useCallback(
     (key: string) => {
       setLeaving((l) => new Set(l).add(key));
-      setTimeout(() => swap(key, true), 220);
+      setTimeout(() => swap(key, true), 340);
     },
     [swap]
   );
@@ -262,7 +345,7 @@ function VibeWall({ onDone }: { onDone: () => void }) {
   const [ready, setReady] = useState<Tile[]>([]);
   const [want, setWant] = useState(100); // how many tiles the wall should currently show
   const [picked, setPicked] = useState<Set<string>>(new Set()); // themes already picked — gone for good
-  const [picks, setPicks] = useState<string[]>([]);
+  const [picks, setPicks] = useState<Tile[]>([]);
   const [busy, setBusy] = useState(false);
   const cursor = useRef(0);
   const queue = useRef<Tile[]>(tiles);
@@ -333,11 +416,31 @@ function VibeWall({ onDone }: { onDone: () => void }) {
       const next = new Set(pickedRef.current).add(t.id);
       pickedRef.current = next;
       setPicked(next);
-      setPicks((p) => [...p, t.id]);
+      setPicks((p) => {
+        if (p.length + 1 >= MIN_PICKS) prefetchFeed();
+        return [...p, t];
+      });
+      postLikes([t.id], undefined, "wall");
       replaceAt(t.key);
     },
     [replaceAt]
   );
+
+  /** Changed your mind: the pick is removed from your taste and its theme can come back to the wall. */
+  const unpick = useCallback((t: Tile) => {
+    const next = new Set(pickedRef.current);
+    next.delete(t.id);
+    pickedRef.current = next;
+    setPicked(next);
+    setPicks((p) => p.filter((x) => x.id !== t.id));
+    unsend(t.id);
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("tp_wall_thumbs", JSON.stringify(picks.slice(-12).map((t) => t.src)));
+    } catch {}
+  }, [picks]);
 
   const count = picks.length;
   const canGo = count >= MIN_PICKS;
@@ -345,8 +448,7 @@ function VibeWall({ onDone }: { onDone: () => void }) {
   const finish = async () => {
     if (!canGo || busy) return;
     setBusy(true);
-    await fetch("/api/session", { method: "POST" }).catch(() => {});
-    await postLikes(picks);
+    await writes.catch(() => {});
     onDone();
   };
 
@@ -378,6 +480,18 @@ function VibeWall({ onDone }: { onDone: () => void }) {
       <div className="fixed bottom-0 inset-x-0 z-30 border-t hairline bg-[var(--bg)]/92 backdrop-blur-md px-4 sm:px-8 py-3">
         <div className="max-w-3xl mx-auto flex items-center gap-4">
           <div className="flex-1 min-w-0">
+            {picks.length > 0 && (
+              <div className="flex items-center gap-1 mb-2 overflow-hidden" aria-label="Your picks — tap one to undo">
+                {[...picks].reverse().slice(0, 12).map((t) => (
+                  <button key={t.id} type="button" onClick={() => unpick(t)} title={`Undo ${t.title}`} className="relative shrink-0 group" style={{ animation: "tp-pop .25s ease-out" }}>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={t.src} alt={t.title} referrerPolicy="no-referrer" className="w-7 h-7 sm:w-8 sm:h-8 rounded-full object-cover border border-[var(--hairline)] group-hover:opacity-40 transition" />
+                    <span className="absolute inset-0 hidden group-hover:flex items-center justify-center text-xs">×</span>
+                  </button>
+                ))}
+                {picks.length <= 3 && <span className="text-[10px] faint ml-1 whitespace-nowrap">tap a pick to undo</span>}
+              </div>
+            )}
             <div className="text-xs dim mb-1.5">
               {count < MIN_PICKS
                 ? `${count} / ${MIN_PICKS} — ${MIN_PICKS - count} more to go`
@@ -410,9 +524,10 @@ const VibeTile = memo(function VibeTile({ tile, onPick, leaving, onBroken }: { t
       type="button"
       onClick={() => onPick(tile)}
       aria-label={tile.title}
-      style={{ animation: "tp-pop .25s ease-out", contentVisibility: "auto", containIntrinsicSize: "auto 100px" }}
-      className={`relative aspect-square rounded-lg sm:rounded-xl overflow-hidden select-none bg-[var(--bg-softer)] transition duration-200 ${leaving ? "scale-50 opacity-0 pointer-events-none" : "active:scale-90"}`}
+      style={{ animation: leaving ? "tp-picked .34s ease-in forwards" : "tp-pop .25s ease-out", contentVisibility: "auto", containIntrinsicSize: "auto 100px" }}
+      className={`relative aspect-square rounded-lg sm:rounded-xl overflow-hidden select-none bg-[var(--bg-softer)] transition duration-150 ${leaving ? "pointer-events-none" : "active:scale-90 hover:brightness-110"}`}
     >
+      {leaving && <Heart />}
       {/* already preloaded + decoded, so it paints instantly */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={tile.src} alt="" referrerPolicy="no-referrer" onError={() => onBroken(tile.key)} className="absolute inset-0 w-full h-full object-cover" />
@@ -452,9 +567,15 @@ function useCardSource(target: number, onProgress?: (p: Progress, mode: string) 
     fetching.current = true;
     setLoading(true);
     try {
-      await fetch("/api/session", { method: "POST" }).catch(() => {});
-      const res = await fetch(`/api/feed?count=24${domainQuery}`);
-      const data = (await res.json()) as FeedResponse;
+      const pre = !domainQuery && feedPrefetch ? await feedPrefetch : null;
+      if (!domainQuery) feedPrefetch = null;
+      let data: FeedResponse;
+      if (pre?.cards) data = pre;
+      else {
+        await ensureSession();
+        await writes.catch(() => {}); // the next batch should already know about the last few taps
+        data = (await (await fetch(`/api/feed?count=24${domainQuery}`)).json()) as FeedResponse;
+      }
       cb.current?.(data.progress, data.mode);
       Object.assign(pools.current, data.pools);
       // dedupe by id and by title (live Qloo cards can twin seed cards)
@@ -523,19 +644,10 @@ type FeedProps = {
 };
 
 function CuratedFeed({ onNext, domains, goal = FEED_TARGET, step = 1, nextLabel = "Go deeper →", heading, blurb }: FeedProps) {
-  const [progress, setProgress] = useState<Progress | null>(null);
-  const [mode, setMode] = useState("mock");
   const [likes, setLikes] = useState(0);
   const sentinel = useRef<HTMLDivElement | null>(null);
 
-  const src = useCardSource(
-    48,
-    (p, m) => {
-      setProgress((prev) => mergeProgress(prev, p));
-      setMode(m);
-    },
-    domains
-  );
+  const src = useCardSource(48, undefined, domains);
   const { take, buffered, exhausted, loading, ticks } = src;
 
   const likedIds = useRef(new Set<string>());
@@ -568,7 +680,7 @@ function CuratedFeed({ onNext, domains, goal = FEED_TARGET, step = 1, nextLabel 
       src.markLiked(card.id);
       replaceAt(card.id); // only this card leaves; a new one takes its place
       setLikes((n) => n + 1);
-      postLikes([card.id], [card]).then((p) => p && setProgress((prev) => mergeProgress(prev, p)));
+      postLikes([card.id], [card], "feed");
     },
     [replaceAt, src]
   );
@@ -576,7 +688,14 @@ function CuratedFeed({ onNext, domains, goal = FEED_TARGET, step = 1, nextLabel 
   const pct = Math.min(100, Math.round((likes / goal) * 100));
   const ready = likes >= goal;
 
-  if (cards.length < FIRST_FEED && !exhausted) return <LoadingScreen label="Curating your feed…" />;
+  if (cards.length < FIRST_FEED && !exhausted)
+    return (
+      <LoadingScreen
+        label="Curating your feed…"
+        thumbs={wallThumbs()}
+        messages={["Reading what you picked…", "Asking the Qloo taste graph about you…", "Finding films, places and food that fit…", "Checking every photo is sharp…", "Almost there…"]}
+      />
+    );
 
   return (
     <main className="flex-1 flex flex-col">
@@ -630,10 +749,6 @@ function CuratedFeed({ onNext, domains, goal = FEED_TARGET, step = 1, nextLabel 
         )}
       </section>
 
-      <p className="fixed bottom-1.5 right-3 text-[10px] dim z-20">
-        taste graph: {mode === "live" ? "live" : "offline"}
-        {progress ? ` · ${progress.confidenceLabel}` : ""}
-      </p>
     </main>
   );
 }
@@ -645,23 +760,30 @@ const FeedCard = memo(function FeedCard({ card, pool, onLike, leaving, onBroken 
       type="button"
       onClick={() => onLike(card)}
       aria-label={`Love ${card.title}`}
-      style={{ animation: "tp-pop .25s ease-out", contentVisibility: "auto", containIntrinsicSize: "auto 260px" }}
-      className={`relative aspect-[3/4] rounded-2xl overflow-hidden border hairline text-left bg-[var(--bg-softer)] transition duration-200 ${leaving ? "scale-75 opacity-0 pointer-events-none" : "active:scale-95"}`}
+      style={{ animation: leaving ? "tp-picked .34s ease-in forwards" : "tp-pop .25s ease-out", contentVisibility: "auto", containIntrinsicSize: "auto 260px" }}
+      className={`relative aspect-[3/4] rounded-2xl overflow-hidden border hairline text-left bg-[var(--bg-softer)] transition duration-150 group ${leaving ? "pointer-events-none" : "active:scale-95"}`}
     >
       {/* preloaded before this card was added, so no pop-in */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={cardImageSrc(card)!} alt="" referrerPolicy="no-referrer" onError={() => onBroken(card.id)} className="absolute inset-0 w-full h-full object-cover" />
       <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/5 to-transparent" />
       <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5">
-        <span className="text-[9px] uppercase tracking-[0.18em] rounded-full px-2 py-0.5 backdrop-blur-sm" style={{ background: `${color}33`, color }}>
-          {card.domain}
+        <span className="flex items-center gap-1.5 text-[9px] uppercase tracking-[0.16em] rounded-full pl-1.5 pr-2 py-0.5 bg-black/60 backdrop-blur-sm text-white/90">
+          <span className="domain-dot !w-1.5 !h-1.5" style={{ background: color }} />
+          {DOMAIN_NAME[card.domain] ?? card.domain}
         </span>
         {pool && pool !== "exploit" && <span className="text-[9px] rounded-full px-2 py-0.5 bg-black/45 backdrop-blur-sm dim">{POOL_LABEL[pool]}</span>}
       </div>
       <div className="absolute bottom-0 inset-x-0 p-3">
         <h3 className="font-display text-base sm:text-lg leading-tight">{card.title}</h3>
-        <p className="text-[10px] dim truncate mt-1">{card.tags.slice(0, 3).join(" · ")}</p>
+        <p className="text-[10px] dim truncate mt-1">{card.tags.slice(0, 3).map(niceTag).join(" · ")}</p>
       </div>
+      {!leaving && (
+        <span className="absolute top-2.5 right-2.5 w-7 h-7 rounded-full bg-black/45 backdrop-blur-sm flex items-center justify-center text-sm opacity-0 group-hover:opacity-100 transition" aria-hidden>
+          ♥
+        </span>
+      )}
+      {leaving && <Heart />}
     </button>
   );
 });
@@ -669,13 +791,14 @@ const FeedCard = memo(function FeedCard({ card, pool, onLike, leaving, onBroken 
 /* ====================== PHASE 3 — a story in three chapters ====================== */
 
 type RoundOption = { id: string; title: string; vibe: string; images: string[] };
+type Round = { kind: string; prompt: string; context?: string; options: RoundOption[] };
 
-type Chapter = { title: string; line: string; blurb: string; kinds: string[] };
+type Chapter = { title: string; blurb: string; kinds: string[] };
 
 const CHAPTERS: Chapter[] = [
-  { title: "Your instincts", line: "Which one pulls you?", blurb: "Four to choose from — tap the one that feels most like you.", kinds: ["film", "food", "tv", "art", "book", "game", "film", "food", "tv", "art"] },
-  { title: "Sports & hobbies", line: "Which would you actually do?", blurb: "Tap the one that sounds like you — then the next four.", kinds: Array(14).fill("hobby") },
-  { title: "Your style", line: "Which of these is most you?", blurb: "Last round, sharper now that we know you better.", kinds: ["book", "game", "food", "art", "film", "tv", "book", "food"] },
+  { title: "Your instincts", blurb: "Four at a time. Tap the one that feels most like you.", kinds: ["film", "food", "book", "tv", "food", "film", "book", "tv"] },
+  { title: "Sports & hobbies", blurb: "How you'd actually spend a free day.", kinds: Array(8).fill("hobby") },
+  { title: "Sharpen", blurb: "Last few, aimed at what we're least sure about.", kinds: Array(6).fill("auto") },
 ];
 
 /** Options already shown this session, so later rounds never repeat them. */
@@ -683,23 +806,96 @@ const shownOptions = new Set<string>();
 
 function Chapters({ onProfile }: { onProfile: () => void }) {
   const [i, setI] = useState(0);
+  const [intro, setIntro] = useState(0); // which chapter's intro card is showing (-1 = none)
+  const [hearing, setHearing] = useState<string[]>([]);
   useEffect(() => {
     const saved = Number(window.localStorage.getItem("tp_chapter") ?? 0);
-    if (saved > 0 && saved < CHAPTERS.length) setI(saved);
+    if (saved > 0 && saved < CHAPTERS.length) {
+      setI(saved);
+      setIntro(saved);
+    }
   }, []);
+  // a one-line read of what we've learned so far, refreshed at each chapter — proof we're listening
+  useEffect(() => {
+    let live = true;
+    writes
+      .catch(() => {})
+      .then(() => fetch("/api/session", { cache: "no-store" }))
+      .then((r) => r.json())
+      .then((d: { hearing?: string[] }) => live && setHearing(d.hearing ?? []))
+      .catch(() => {});
+    if (i === CHAPTERS.length - 1) {
+      // warm the taste graph for the results page while the last questions are answered
+      const city = window.localStorage.getItem("tp_city");
+      writes
+        .catch(() => {})
+        .then(() => fetch(`/api/taste/recommend${city ? `?city=${encodeURIComponent(city)}` : ""}`))
+        .catch(() => {});
+    }
+    return () => {
+      live = false;
+    };
+  }, [i]);
   const ch = CHAPTERS[i];
   const last = i === CHAPTERS.length - 1;
+  const finish = () => {
+    window.localStorage.removeItem("tp_chapter");
+    writes.catch(() => {}).then(onProfile);
+  };
   const advance = () => {
     window.scrollTo({ top: 0 });
-    if (last) {
-      window.localStorage.removeItem("tp_chapter");
-      onProfile();
-    } else {
-      window.localStorage.setItem("tp_chapter", String(i + 1));
-      setI(i + 1);
-    }
+    if (last) return finish();
+    window.localStorage.setItem("tp_chapter", String(i + 1));
+    setIntro(i + 1);
+    setI(i + 1);
   };
-  return <QuadRound key={i} kinds={ch.kinds} heading={`Chapter ${i + 1} of ${CHAPTERS.length} · ${ch.title}`} line={ch.line} blurb={ch.blurb} onDone={advance} />;
+  return (
+    <>
+      {intro === i && <ChapterIntro n={i + 1} total={CHAPTERS.length} chapter={ch} hearing={hearing} onStart={() => setIntro(-1)} />}
+      {/* the first round loads underneath the intro, so it's ready the moment you start */}
+      <div className={intro === i ? "hidden" : "contents"}>
+        <QuadRound key={i} kinds={ch.kinds} heading={`Chapter ${i + 1} of ${CHAPTERS.length} · ${ch.title}`} blurb={ch.blurb} hearing={hearing} onDone={advance} onSkip={finish} />
+      </div>
+    </>
+  );
+}
+
+function ChapterIntro({ n, total, chapter, hearing, onStart }: { n: number; total: number; chapter: Chapter; hearing: string[]; onStart: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onStart, 2600);
+    return () => clearTimeout(t);
+  }, [onStart]);
+  return (
+    <main className="flex-1 flex items-center justify-center px-6 cursor-pointer" onClick={onStart} style={{ animation: "tp-fade .35s ease-out" }}>
+      <div className="text-center max-w-sm">
+        <div className="flex justify-center gap-1.5 mb-6">
+          {Array.from({ length: total }, (_, k) => (
+            <span key={k} className={`h-1 rounded-full transition-all ${k < n ? "w-8 bg-[var(--like)]" : "w-4 bg-[var(--hairline)]"}`} />
+          ))}
+        </div>
+        <p className="text-[0.7rem] uppercase tracking-[0.25em] dim mb-3">
+          Chapter {n} of {total}
+        </p>
+        <h1 className="font-display text-4xl sm:text-5xl mb-3">{chapter.title}</h1>
+        <p className="dim mb-6">{chapter.blurb}</p>
+        {hearing.length > 0 && (
+          <div className="mb-7">
+            <p className="text-xs faint mb-2">So far we&apos;re hearing</p>
+            <div className="flex flex-wrap justify-center gap-1.5">
+              {hearing.map((h) => (
+                <span key={h} className="text-sm border hairline rounded-full px-3 py-1">
+                  {h}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+        <button className="btn-primary text-sm" onClick={onStart}>
+          Start →
+        </button>
+      </div>
+    </main>
+  );
 }
 
 /** Tries each candidate photo in order and keeps the first that is genuinely sharp. */
@@ -709,88 +905,125 @@ async function firstGoodImage(o: RoundOption): Promise<string | null> {
 }
 
 /**
- * Four-way "which pulls you?". Rounds are built per person on the server (same kind of thing in every
- * option, different moods), photos are quality-checked before they show, and rounds load ahead.
+ * Four-way "which pulls you?". Each round is built for this person on the server (same kind of thing
+ * in every option, different moods) one step ahead, so it already knows the choice made just before.
+ * The pick counts strongly and the three passed over count lightly against, so every answer is relative.
  */
-function QuadRound({ kinds, heading, line, blurb, onDone }: { kinds: string[]; heading: string; line: string; blurb: string; onDone: () => void }) {
+function QuadRound({ kinds, heading, blurb, hearing, onDone, onSkip }: { kinds: string[]; heading: string; blurb: string; hearing: string[]; onDone: () => void; onSkip: () => void }) {
   type Shown = { opt: RoundOption; src: string };
-  const rounds = useRef<RoundOption[][] | null>(null);
-  const prepared = useRef(new Map<number, Promise<Shown[]>>());
+  type Ready = { round: Round; shown: Shown[] };
+  const cache = useRef(new Map<number, Promise<Ready | null>>());
   const [idx, setIdx] = useState(0);
-  const [total, setTotal] = useState(0);
-  const [view, setView] = useState<Shown[] | null>(null);
+  const [view, setView] = useState<Ready | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
 
-  const prepare = useCallback((n: number): Promise<Shown[]> => {
-    const hit = prepared.current.get(n);
-    if (hit) return hit;
-    const p = (async () => {
-      const r = rounds.current?.[n];
-      if (!r) return [];
-      const checked = await Promise.all(r.map(async (opt) => ({ opt, src: await firstGoodImage(opt) })));
-      const good = checked.filter((x): x is Shown => !!x.src).slice(0, 4);
-      good.forEach((g) => shownOptions.add(g.opt.id));
-      return good;
-    })();
-    prepared.current.set(n, p);
-    return p;
-  }, []);
+  /** Ask the server for round n on top of every choice sent so far, and keep only sharp photos. */
+  const build = useCallback(
+    async (n: number, avoid: string[] = []): Promise<Ready | null> => {
+      if (n >= kinds.length) return null;
+      await writes.catch(() => {}); // build on the latest choices
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const exclude = [...shownOptions, ...avoid].join(",");
+        const data = (await fetch(`/api/taste/rounds?kinds=${kinds[n]}&offset=${n + attempt}${exclude ? `&exclude=${exclude}` : ""}`, { cache: "no-store" })
+          .then((r) => r.json())
+          .catch(() => null)) as { rounds?: Round[] } | null;
+        const round = data?.rounds?.[0];
+        if (!round) return null;
+        const checked = await Promise.all(round.options.map(async (opt) => ({ opt, src: await firstGoodImage(opt) })));
+        const good = checked.filter((x): x is Shown => !!x.src).slice(0, 4);
+        if (good.length >= 3) return { round, shown: good }; // otherwise ask once more for fresh options
+        avoid = [...avoid, ...round.options.map((o) => o.id)];
+      }
+      return null;
+    },
+    [kinds]
+  );
 
-  // fetch the personalised rounds once, then prepare the first three immediately
+  const load = useCallback(
+    (n: number): Promise<Ready | null> => {
+      const hit = cache.current.get(n);
+      if (hit) return hit;
+      const p = build(n);
+      cache.current.set(n, p);
+      return p;
+    },
+    [build]
+  );
+
+  const show = useCallback(
+    async (n: number) => {
+      for (let k = n; k < kinds.length; k++) {
+        const v = await load(k);
+        if (!v) continue; // couldn't muster three sharp options — skip this one
+        v.shown.forEach((x) => shownOptions.add(x.opt.id)); // only what was actually on screen is "seen"
+        setChosen(null);
+        setIdx(k);
+        setView(v);
+        load(k + 1);
+        return;
+      }
+      onDone();
+    },
+    [kinds, load, onDone]
+  );
+
   useEffect(() => {
     let live = true;
-    const exclude = [...shownOptions].join(",");
-    fetch(`/api/taste/rounds?kinds=${kinds.join(",")}${exclude ? `&exclude=${exclude}` : ""}`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d: { rounds: RoundOption[][] }) => {
-        if (!live) return;
-        rounds.current = d.rounds;
-        setTotal(d.rounds.length);
-        if (!d.rounds.length) return onDone();
-        prepare(0).then((v) => live && setView(v));
-        prepare(1);
-        prepare(2);
-      })
-      .catch(() => live && onDone());
+    load(0).then(() => {
+      if (live) show(0);
+    });
     return () => {
       live = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const advance = useCallback(
-    async (next: number) => {
-      if (next >= (rounds.current?.length ?? 0)) return onDone();
-      // skip rounds that couldn't muster three sharp options
-      let n = next;
-      let v = await prepare(n);
-      while (v.length < 3 && n + 1 < (rounds.current?.length ?? 0)) v = await prepare(++n);
-      if (v.length < 3) return onDone();
-      setChosen(null);
-      setIdx(n);
-      setView(v);
-      prepare(n + 1);
-      prepare(n + 2);
-    },
-    [prepare, onDone]
-  );
-
   const choose = (id: string) => {
-    if (chosen) return;
+    if (chosen || !view) return;
     setChosen(id);
-    postLikes([id, id]); // a deliberate choice counts double
-    setTimeout(() => advance(idx + 1), 380);
+    const passed = view.shown.map((x) => x.opt.id).filter((x) => x !== id);
+    send({ ids: [id], strength: 1.6, passed, source: `round:${view.round.kind}` });
+    rebuildNext();
+    setTimeout(() => show(idx + 1), 380);
+  };
+  const noneOfThese = () => {
+    if (chosen || !view) return;
+    setChosen("none");
+    send({ ids: view.shown.map((x) => x.opt.id), interaction: "dislike", strength: 0.4, source: `round:${view.round.kind}:none` });
+    rebuildNext();
+    setTimeout(() => show(idx + 1), 200);
+  };
+  /**
+   * The next round was prefetched before this answer existed. Rebuild it on top of the answer (build()
+   * waits for the write); if that takes longer than a beat, the prefetched round is shown instead.
+   */
+  const rebuildNext = () => {
+    const next = idx + 1;
+    const prefetched = load(next);
+    const fresh = build(next);
+    const beat = new Promise<null>((r) => setTimeout(() => r(null), 1200));
+    cache.current.set(
+      next,
+      Promise.race([fresh, beat]).then(async (v) => v ?? (await prefetched))
+    );
   };
 
-  if (!view) return <LoadingScreen label="Choosing options for you…" />;
+  if (!view) return <LoadingScreen label="Choosing options for you…" thumbs={wallThumbs()} messages={["Choosing options for you…", "Making sure each one is a real choice…"]} />;
+  const { round, shown } = view;
+  const subline = round.context ?? (idx === 0 && hearing.length ? `So far we're hearing: ${hearing.join(" · ")}` : blurb);
   return (
     <main className="flex-1 flex flex-col px-3 sm:px-8 pt-4 pb-10 max-w-3xl mx-auto w-full">
-      <Steps current={2} />
+      <div className="flex items-center justify-between gap-3">
+        <Steps current={2} />
+        <button onClick={onSkip} className="text-xs dim underline underline-offset-4 hover:text-[var(--ink)] whitespace-nowrap">
+          Skip to my profile →
+        </button>
+      </div>
       <p className="text-xs dim mt-3">{heading}</p>
-      <h1 className="font-display text-2xl sm:text-3xl mt-1">{line}</h1>
-      <p className="dim text-sm mt-1 mb-4">{blurb}</p>
+      <h1 className="font-display text-2xl sm:text-3xl mt-1">{round.prompt}</h1>
+      <p className="dim text-sm mt-1 mb-4">{subline}</p>
       <div className="grid grid-cols-2 gap-2.5 sm:gap-3">
-        {view.map(({ opt, src }) => (
+        {shown.map(({ opt, src }) => (
           <button
             key={`${idx}-${opt.id}`}
             type="button"
@@ -808,12 +1041,15 @@ function QuadRound({ kinds, heading, line, blurb, onDone }: { kinds: string[]; h
           </button>
         ))}
       </div>
-      <div className="mt-5 flex items-center justify-between">
-        <div className="flex-1 h-1 rounded-full bg-[var(--hairline)] overflow-hidden mr-4">
-          <div className="h-full bg-[var(--like)] transition-all duration-300" style={{ width: `${(idx / Math.max(1, total)) * 100}%` }} />
+      <div className="mt-4 flex items-center gap-4">
+        <button onClick={noneOfThese} disabled={!!chosen} className="btn-ghost !text-xs !py-1.5 !px-3 whitespace-nowrap disabled:opacity-40">
+          None of these
+        </button>
+        <div className="flex-1 h-1 rounded-full bg-[var(--hairline)] overflow-hidden">
+          <div className="h-full bg-[var(--like)] transition-all duration-300" style={{ width: `${(idx / Math.max(1, kinds.length)) * 100}%` }} />
         </div>
         <span className="text-xs dim whitespace-nowrap">
-          {idx + 1} / {total}
+          {idx + 1} / {kinds.length}
         </span>
       </div>
     </main>

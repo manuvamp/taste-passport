@@ -100,7 +100,7 @@ function AgentContent() {
   return (
     <main className="flex-1 pb-24">
       <section className="px-5 sm:px-8 pt-12 max-w-5xl mx-auto">
-        <p className="overline mb-4">The Taste Agent</p>
+        <p className="eyebrow mb-4">The Taste Agent</p>
         <h1 className="font-display text-4xl sm:text-5xl mb-3 leading-tight">
           Now AI knows what <em>feels like you.</em>
         </h1>
@@ -193,7 +193,7 @@ function Comparison({ data }: { data: CompareResponse }) {
     return (
       <div>
         <div className="panel p-6 sm:p-8 mb-8">
-          <p className="overline mb-2">Anyone gets this</p>
+          <p className="eyebrow mb-2">Anyone gets this</p>
           <h2 className="font-display text-2xl mb-3">The generic answer</h2>
           <p className="dim text-sm mb-6">{data.delta.explanation}</p>
           <PlanList plan={data.anyone} taste={false} />

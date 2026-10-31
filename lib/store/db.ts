@@ -1,4 +1,4 @@
-import type { TasteProfile, TasteSignal, TasteState } from "@/lib/types";
+import type { TasteProfile, TasteState } from "@/lib/types";
 import fs from "fs";
 import path from "path";
 
@@ -100,13 +100,15 @@ function prune(d: JsonDB) {
 /* unified interface (async — KV is remote)                             */
 /* ------------------------------------------------------------------ */
 
+/**
+ * null means "no such session". A KV failure throws instead: treating a hiccup as "missing" would let
+ * the caller create an empty record over the real one and wipe the user's taste.
+ */
 export async function getSession(id: string): Promise<SessionRecord | null> {
   if (useKv) {
-    try {
-      return await kv<SessionRecord>(["GET", KV_PREFIX + id]);
-    } catch {
-      return null; // KV hiccup — treat as a fresh session rather than 500
-    }
+    const raw = await kv<string | SessionRecord>(["GET", KV_PREFIX + id]);
+    if (!raw) return null;
+    return typeof raw === "string" ? (JSON.parse(raw) as SessionRecord) : raw; // REST GET returns the stored JSON string
   }
   return fileDb().sessions[id] ?? null;
 }
@@ -187,20 +189,48 @@ export async function getOrCreateSession(id?: string): Promise<SessionRecord> {
   return rec;
 }
 
-// ---- mutation helpers: mutate `rec` then persist it ------------------
+// ---- mutation helpers ------------------------------------------------
 
-export async function markShown(rec: SessionRecord, cardIds: string[], roundBump = 1): Promise<void> {
-  const set = new Set(rec.state.shownCardIds);
-  for (const c of cardIds) set.add(c);
-  rec.state.shownCardIds = [...set];
-  rec.currentRound += roundBump;
-  await putSession(rec);
+const MAX_SHOWN = 3000;
+const MAX_VERSIONS = 6;
+
+/**
+ * Read-modify-write on the freshest copy of a session. Requests that hold a session for a while
+ * (the feed waits on the taste graph) must not write back a stale copy over likes that landed in the
+ * meantime, so every mutation re-reads right before it writes.
+ */
+export async function updateSession(id: string, mutate: (rec: SessionRecord) => void): Promise<SessionRecord | null> {
+  // null = the session is gone (e.g. the user deleted it mid-request) — never resurrect it
+  const fresh = await getSession(id);
+  if (!fresh) return null;
+  mutate(fresh);
+  fresh.state.lastUpdated = new Date().toISOString();
+  await putSession(fresh);
+  return fresh;
 }
 
+export async function markShown(rec: SessionRecord, cardIds: string[], roundBump = 1): Promise<void> {
+  const apply = (r: SessionRecord) => {
+    const set = new Set(r.state.shownCardIds);
+    for (const c of cardIds) set.add(c);
+    r.state.shownCardIds = [...set].slice(-MAX_SHOWN);
+    r.currentRound += roundBump;
+  };
+  const fresh = await updateSession(rec.id, apply);
+  if (fresh) {
+    rec.state.shownCardIds = fresh.state.shownCardIds;
+    rec.currentRound = fresh.currentRound;
+  }
+}
+
+/** Version history stays small: the newest few, without the heavy picture lists. */
 export async function saveProfileVersion(rec: SessionRecord, profile: TasteProfile): Promise<void> {
-  rec.profileVersions.push(profile);
-  rec.state.profileVersion = profile.profileVersion;
-  await putSession(rec);
+  const slim: TasteProfile = { ...profile, gallery: undefined, suggestions: undefined, unexpectedConnections: profile.unexpectedConnections.slice(0, 3) };
+  const apply = (r: SessionRecord) => {
+    r.profileVersions = [...r.profileVersions, slim].slice(-MAX_VERSIONS);
+    r.state.profileVersion = profile.profileVersion;
+  };
+  await updateSession(rec.id, apply);
 }
 
 /** Persist a session after its state was mutated in place (applyInteraction etc). */

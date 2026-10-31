@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { resolveSession } from "@/lib/session";
+import { SESSION_COOKIE, resolveSession } from "@/lib/session";
 import { nextBatch, computeConfidence, confidenceLabel } from "@/lib/taste/engine";
 import { markShown } from "@/lib/store/db";
 import { getQlooAdapter } from "@/lib/qloo";
@@ -11,7 +11,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "slow down" }, { status: 429 });
   }
   const url = new URL(req.url);
-  const count = Math.min(Number(url.searchParams.get("count") ?? 12), 24);
+  const count = Math.max(1, Math.min(Number(url.searchParams.get("count")) || 12, 24));
   const domains = url.searchParams.get("domains")?.split(",").filter(Boolean).slice(0, 12);
   const session = await resolveSession(url.searchParams.get("sid") ?? undefined);
 
@@ -23,7 +23,7 @@ export async function GET(req: Request) {
   const decisive = session.state.signals.filter((s) => s.interaction !== "skip").length;
   const confidence = computeConfidence(session.state);
 
-  return NextResponse.json({
+  const res = NextResponse.json({
     cards,
     adapted,
     pools,
@@ -38,4 +38,7 @@ export async function GET(req: Request) {
     },
     mode: getQlooAdapter().mode,
   });
+  // pin the browser's own session only: a shared ?sid= link must never adopt someone else's session
+  if (!url.searchParams.get("sid")) res.cookies.set(SESSION_COOKIE, session.id, { httpOnly: true, sameSite: "lax", maxAge: 60 * 60 * 24 * 30, path: "/" });
+  return res;
 }

@@ -63,7 +63,7 @@ export async function resolveCardEntities(
   // resolve concurrently through a small worker pool (cold-start batches
   // resolve ~15 new ids; sequential was ~10s, pool-of-5 trims it to ~2s).
   // Failures are cached briefly so transient errors don't poison the cache.
-  const queue = toResolve.slice(0, 15);
+  const queue = toResolve.slice(0, 40);
   const workers = Array.from({ length: Math.min(5, queue.length) }, async () => {
     while (queue.length > 0) {
       const id = queue.shift()!;

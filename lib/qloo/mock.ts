@@ -119,7 +119,7 @@ export const mockAdapter = {
     const start = Date.now();
     const take = input.take ?? 10;
     const interests: Record<string, number> = {};
-    for (const raw of input.interests) interests[raw.replace(/^mock:/, "")] = 1;
+    for (const raw of input.interests) interests[raw.replace(/^(mock|card):/, "")] = 1;
     const exclude = new Set([...(input.excludeIds ?? []), ...Object.keys(interests)]);
 
     const candidates = SEED_CARDS.filter((c) => !exclude.has(c.id)).map((c) => {

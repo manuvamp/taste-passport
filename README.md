@@ -5,13 +5,13 @@
 
 Taste Passport is a **portable cultural taste layer for AI agents**, built on the
 [Qloo taste graph](https://www.qloo.com). Instead of filling out a questionnaire,
-you react to ~40 images. Every swipe resolves into a real cultural entity, the
-feed adapts around your emerging taste (70% exploit / 20% adjacent / 10% novel),
-and the result is a living **cultural fingerprint** that any AI agent can consume
+you tap pictures you love, then answer a few four-way "which one?" rounds. Every
+tap resolves into a real cultural entity, the feed adapts around your emerging
+taste (70% exploit / 20% adjacent / 10% novel), and the result is a living **cultural fingerprint** that any AI agent can consume
 through a JSON API or an MCP server — so agents stop guessing what you'll love.
 
 ```
-you → swipes → cultural entities → Qloo taste graph
+you → taps & choices → cultural entities → Qloo taste graph
      → adaptive taste model → your cultural fingerprint
      → any AI agent → answers that feel like you
 ```
@@ -43,37 +43,62 @@ dumber thing. With Qloo, every interaction becomes a **cultural entity signal**:
 
 ## How it works
 
-1. **Cold start** — 26 broad cards across 11 domains. No typing, no quiz.
-2. **Adaptive feed** — each batch is scored and mixed:
+1. **Vibe wall** — an endless wall of people-free photos (dishes, places, rooms,
+   textures). Tap 15–25 that feel like you; each pick swaps in something new.
+2. **Your feed** — adaptive cards. Each batch is scored and mixed:
    `score = 0.40·qlooAffinity + 0.25·bridgeSimilarity + 0.15·tagSimilarity + 0.10·domainBalance + 0.10·novelty`
-   (weights configurable via env). Batches mix **70% exploitation, 20% adjacent
-   exploration, 10% deliberate novelty** — taste isn't a prison; the system
-   deliberately probes neighboring preferences to avoid filter bubbles.
-3. **Taste state** — likes attract, dislikes repel, with diminishing returns,
-   recency weighting, and per-domain balancing so five music likes don't turn
-   you into "a music profile".
-4. **Profile generation** — after ~12 decisive picks a preliminary profile
-   appears; ~30+ gives high confidence. Qloo-derived signals form the factual
-   base; an optional LLM only turns those signals into prose (clearly labeled).
-5. **Agent integration** — the Taste Agent answers "plan my Saturday in Tokyo"
-   twice, once generically and once grounded in your profile + Qloo, side by
-   side. The delta is the demo. Feedback buttons on each pick feed back into
-   the profile (continuous learning, versioned).
+   (weights configurable via env), **70% exploitation, 20% adjacent, 10% novelty**.
+   Live film/TV/game cards come from Qloo, each domain seeded with its own anchors.
+3. **Three chapters of four-way rounds** — *Your instincts* (film, food, books,
+   art, TV), *Sports & hobbies*, then *Sharpen*, which aims at whatever we know
+   least about. Rounds are built one step ahead on the server, so each reflects
+   the choice just made. Questions are concrete ("What's for dinner tonight?"),
+   say what they're tuned to ("Tuned to your picks: Ramen & Kaiseki"), and offer
+   "None of these". The pick counts strongly (×1.6) and the three passed over
+   count lightly against (×0.25), so every answer is *relative*.
+4. **Taste state** — likes attract, dislikes repel, with diminishing returns,
+   recency weighting and per-domain balancing.
+5. **Profile** — archetype (plus a second pull), the *threads* you kept coming back
+   to (each with the real picks behind it), hobbies, a five-axis signature, a day
+   made for you, and "outside your usual" cross-domain picks. Every sentence names
+   things you actually picked.
+6. **Made for you** — films, series, games, books, artists, podcasts, places and
+   brands from Qloo, plus restaurants and places for *your* hobbies in your city.
+   Curated local sections back them up, so it's never empty.
+7. **Agent integration** — the Taste Agent answers "plan my Saturday in Tokyo"
+   twice, once generically and once grounded in your profile + Qloo, side by side.
+
+### Grounding rules (personalisation without making things up)
+
+- **Anchors, not a bag of likes.** Each Qloo query is seeded from its own world:
+  your picks there, real stand-ins for vibe tiles you tapped (the "Hot spring
+  steam" tile → *Onsen*), the best local matches in that domain, then your
+  strongest picks overall. A mixed bag of everything drifts toward whatever is
+  merely popular; per-domain anchors land on Margaret Howell rather than Zara.
+- **"Because you picked…"** only ever names something you tapped (vibe stand-ins
+  are labelled with the tile you tapped). Our own inferred anchors appear as
+  "Close to…", never as your picks. Local reasons require a real overlap of two or
+  more tags (or one rare one).
+- **No echoes.** A seed card that is the same thing as a vibe you already picked
+  (the "Ramen" card after the Ramen tile) is never recommended back to you.
 
 ## Architecture
 
 ```
 app/                       Next.js App Router
   page.tsx                 landing
-  discover/                adaptive swipe feed (drag + keyboard)
-  profile/                 Taste DNA (constellation, unexpected connections)
+  discover/                vibe wall → adaptive feed → three chapters of four-way rounds
+  profile/                 Taste DNA: threads, signature, day, made-for-you, editor
   agent/                   Taste Agent + "What Qloo changed" comparison
   demo/                    deterministic personas (Maya / Alex)
   dev/                     admin/debug dashboard
   api/
     session                anonymous cookie session
     feed                   adaptive batch selection
-    interact               record like/dislike/skip
+    interact               record likes/dislikes (+ strength, + passed-over options)
+    taste/rounds           personalised four-way rounds (film/food/…/hobby/auto)
+    taste/recommend        made-for-you sections (live Qloo + curated), city-aware
+    taste/tweak            boost / remove a pick from the profile
     taste/profile          portable profile (GET) + feedback (POST) + privacy (DELETE)
     taste/explain          grounded "why this matches you"
     agent/plan             Taste Agent (single arm)
@@ -90,13 +115,16 @@ app/                       Next.js App Router
 lib/
   qloo/                    adapter (live + mock), TTL cache, metrics
   taste/engine.ts          scoring, exploration, confidence, profile builder
+  taste/signals.ts         what you actually picked: anchors, vibe stand-ins, grounded reasons
+  taste/rounds.ts          four-way round builder (same kind, different moods)
+  taste/recommend.ts       made-for-you sections, re-ranked by your tags
   agent/                   Taste Agent + optional LLM polish + progress ticks
   store/db.ts              sessions: Vercel KV (prod) / JSON file (local), auto
   rate-limit.ts            in-memory token bucket for expensive routes
 mcp/server.mjs             MCP stdio server (5 tools)
 data/cards.ts              174 curated seed entities, 12 domains
 scripts/seed-cards.mjs     seed catalog validator
-tests/                     vitest suite (27 tests)
+tests/                     vitest suite (37 tests)
 ```
 
 ## Qloo integration
@@ -120,10 +148,16 @@ gracefully to the mock graph if Qloo is unavailable. The UI shows a subtle
   (per-entity), × recency multiplier (0.8→1.2), so no single swipe dominates.
 - Exploration pools: EXPLOIT / ADJACENT / NOVEL, mixed 70/20/10 per batch
   (targets computed, test-enforced), shifting toward exploit as confidence grows.
-- Confidence = f(decisive count, domain coverage, like/dislike balance) →
+- Interaction strength (0–2): a four-way choice counts ×1.6; options passed over
+  count ×0.25 against (tags only lightly touch the domain, so choosing one film
+  over three others never makes you look anti-film).
+- Confidence = f(distinct picks, domain coverage, contrast from passed-over options) →
   Learning / Emerging / Strong / High confidence. A product indicator, not a
   scientific accuracy claim.
-- Profile versions are stored on every material change — "your taste evolved."
+- Profile versions are stored on every material change (the newest six, slimmed).
+- Writes re-read the freshest session right before saving, so a slow feed request
+  can never overwrite likes that landed meanwhile; the client also queues its
+  writes in order.
 
 ## MCP / agent integration
 
@@ -150,7 +184,7 @@ anonymous session id you choose (find yours on `/dev`).
 npm install
 cp .env.example .env.local   # optional — mock mode needs nothing
 npm run dev                  # http://localhost:3000
-npm test                     # vitest (27 tests)
+npx vitest run               # vitest (37 tests)
 node scripts/seed-cards.mjs  # validate the seed catalog
 ```
 

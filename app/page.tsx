@@ -8,9 +8,9 @@ const IMAGES = vibeImages as Record<string, string[]>;
 const STRIP = VIBES.filter((v) => IMAGES[v.id]?.length).filter((_, i) => i % 5 === 0).slice(0, 16);
 
 const STEPS = [
-  { n: "1", title: "Tap your vibes", body: "A wall of ~120 pictures — dishes, places, rooms, moods. Tap 20–30 that feel like you. About a minute, no typing." },
-  { n: "2", title: "Go deeper", body: "An endless feed of specific films, music, brands and places chosen by the Qloo taste graph. Tap what you love, scroll past the rest." },
-  { n: "3", title: "Plug it into your AI", body: "Your taste becomes a profile any agent can read through MCP or a simple API — so it recommends like it knows you." },
+  { n: "1", title: "Tap your vibes", body: "A wall of pictures — dishes, places, rooms, moods. Tap 15–25 that feel like you. No typing, and you can undo any pick." },
+  { n: "2", title: "Answer quick “which one?” rounds", body: "Four options at a time: tonight's film, dinner, a free Saturday. Each round is built around your last answer." },
+  { n: "3", title: "Get your Taste DNA", body: "The threads that run through your picks, plus films, books, music, brands and places near you — then plug it into any AI." },
 ];
 
 const TOOLS = [
@@ -32,18 +32,18 @@ export default function Landing() {
           <em>what you like.</em>
         </h1>
         <p className="dim text-lg max-w-xl mx-auto mb-9 leading-relaxed">
-          Tap through a few pictures. Taste Passport builds a portable taste profile you can connect to
-          Claude, other AI agents or your own code — so every recommendation fits you.
+          Tap pictures you love and answer a few quick “which one?” rounds. You get a taste profile with
+          picks made for you — and a link that teaches Claude or any AI agent what you like.
         </p>
         <div className="flex flex-wrap justify-center items-center gap-3">
           <Link href="/discover" className="btn-primary px-8 py-3.5 text-base">
-            Build my taste — 1 minute →
+            Build my taste — about 3 minutes →
           </Link>
           <Link href="/demo" className="btn-ghost px-6 py-3.5">
             See an example profile
           </Link>
         </div>
-        <p className="faint text-xs mt-5">No signup · works on your phone</p>
+        <p className="faint text-xs mt-5">No signup · works on your phone · delete it any time</p>
       </section>
 
       <section className="px-3 sm:px-8 pb-16 max-w-5xl mx-auto" aria-hidden>
